@@ -9,5 +9,5 @@
  - PyTorch
  - sqlite3
  - pandas
- - Discord Python API ([discord.py](https://github.com/Rapptz/discord.py)
+ - Discord Python API ([discord.py](https://github.com/Rapptz/discord.py))
  - NumPy
