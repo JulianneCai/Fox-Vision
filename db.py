@@ -87,16 +87,17 @@ class FoxDB:
         self.cursor.execute('SELECT arr FROM foxes')
         rows = self.cursor.fetchall()
         return rows
-        
 
-if __name__ == '__main__':
-    db = FoxDB()
+#  for testing        
+
+# if __name__ == '__main__':
+#     db = FoxDB()
     
     # db.create_fox_train()
     # db.insert_fox_train()
     
     #  to test if the values were inserted properly
-    values = db.read_fox_train()
+    # values = db.read_fox_train()
     
-    print(values)
+    # print(values)
     
