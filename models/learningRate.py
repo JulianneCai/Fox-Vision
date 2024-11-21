@@ -1,10 +1,6 @@
 import torch
-import torch.nn as nn
 
 from torch.optim.lr_scheduler import _LRScheduler
-from torch.optim import Adam
-
-from trainer import FoxCNN, Trainer
 
 
 
@@ -28,10 +24,10 @@ class IteratorWrapper:
     
     def __next__(self):
         try: 
-            inputs, labels = next(enumerate(self._iterator))
+            _, (inputs, labels) = next(enumerate(self._iterator), 0)
         except StopIteration:
             self._iterator = iter(self.iterator)
-            inputs, labels, *_ = next(enumerate(self._iterator))
+            _, (inputs, labels), *_ = next(enumerate(self._iterator), 0)
 
         return inputs, labels
     
@@ -52,7 +48,7 @@ class LearningRateFinder:
         return self.model
     
     def get_optimiser(self):
-        return optimiser
+        return self.optimiser
     
     def get_criterion(self):
         return self.criterion
@@ -65,11 +61,11 @@ class LearningRateFinder:
         self.optimiser.zero_grad()
         
         x, y = iterator.get_batch()
-        # x = x.to(self.device)
-        # y = y.to(self.device)
+        x = x.to(self.device)
+        y = y.to(self.device)
         
-        y_pred, _ = self.model(x)
-        
+        y_pred, _ = self.model(x) 
+       
         loss = self.criterion(y_pred, y)
         
         loss.backward()
@@ -103,30 +99,6 @@ class LearningRateFinder:
                 break
         
         self.model.load_state_dict(torch.load('init_params.pt'))
-
-if __name__ == '__main__':
-    trainer = Trainer()
-    
-    START_LR = 1e-7
-    
-    model = FoxCNN()
-    optimiser = Adam(model.parameters(), lr=START_LR)
-    criterion = nn.BCELoss()
-    
-    lr_finder = LearningRateFinder(model, optimiser, criterion)
-    
-    model.to(lr_finder.get_device())
-    
-    criterion = criterion.to(lr_finder.get_device())
-    
-    END_LR = 10
-    NUM_ITER = 100
-    
-    lrs, losses = lr_finder.range_test(trainer.get_train_loader(),
-                                       END_LR, 
-                                       NUM_ITER
-                                       )
-    
-    print(lrs)
-    print(losses)
+        
+        return lrs, losses
     
