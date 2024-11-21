@@ -1,189 +1,282 @@
+import time
+import math
+
+import torch
+from tqdm import tqdm
+
+import torch.nn as nn
+from torch.nn.utils import parameters_to_vector
+
+from torch.optim import Adam
+
 try:
-    from utils.processImage import ImageProcessor, FoxDataset
+    from utils.processImage import ImageProcessor
 except ModuleNotFoundError:
     import sys
     sys.path.append(sys.path[0] + '/..')
-    from utils.processImage import ImageProcessor, FoxDataset
+    from utils.processImage import ImageProcessor
 
-import torch
-
-import torch.nn as nn
-import torch.nn.functional as F
-
-from torch.optim import Adam
-import torch.nn as nn
-from torch.autograd import Variable
-
-from torch.utils.data import DataLoader
 
 
 class FoxCNN(nn.Module):
-    def __init__(self):
-        super(FoxCNN, self).__init__()
+    def __init__(self, output_dim):
+        """Convolutional neural network that recognises pictures of foxes
+
+        Args:
+            output_dim (int): number of classes 
+        """
+        super().__init__()
         
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=12, kernel_size=5)
-        self.bn1 = nn.BatchNorm2d(num_features=12)
         
-        self.conv2 = nn.Conv2d(in_channels=12, out_channels=12, kernel_size=5)
-        self.bn2 = nn.BatchNorm2d(num_features=12)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=2, padding=1),  # in_channels, out_channels, kernel_size, stride, padding
+            nn.MaxPool2d(kernel_size=2),  # kernel_size
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=64, out_channels=192, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=192, out_channels=384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=384, out_channels=256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=2),
+            nn.ReLU(inplace=True)
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(256 * 4 * 4, 4096), # using batch_size 4
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            # nn.Sigmoid()
+            nn.Linear(4096, output_dim),
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        h = x.view(x.size(0), -1)
+        x = self.classifier(h)
+        return x, h
+   
         
-        self.conv4 = nn.Conv2d(in_channels=12, out_channels=24, kernel_size=5)
-        self.bn4 = nn.BatchNorm2d(num_features=24)
-        
-        self.conv5 = nn.Conv2d(in_channels=24, out_channels=24, kernel_size=5)
-        self.bn5 = nn.BatchNorm2d(num_features=24)
-        
-        self.fc1 = nn.Sigmoid()
-        
-    def forward(self, input):
-        output = F.relu(self.bn1(self.conv1(input)))
-        output = F.relu(self.bn2(self.conv2(output)))
-        output = self.pool(output)
-        output = F.relu(self.bn4(self.conv4(output)))
-        output = F.relu(self.bn5(self.conv5(output)))
-        output = output.view(-1, 24*10*10)
-        output = self.fc1(output)
-        
-        return output
-    
     
 class Trainer:
     def __init__(self):
-        self.model = FoxCNN()  #  fox convolutional neural network
-        self.loss = nn.BCELoss()  #  binary cross-entropy loss
+        self.model = FoxCNN(output_dim=2)  #  convolutional neural network
+        self.loss = nn.CrossEntropyLoss()  #  cross-entropy loss
+        #  Adam optimiser
         self.optimiser = Adam(self.model.parameters(), lr=0.001, weight_decay=.0001)
         self.batch_size = 64
         
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
         self.version = 0
         
-        img_process = ImageProcessor()
-        img_process.load_images()
+        self.img_process = ImageProcessor()
         
-        train, test = img_process.get_train(), img_process.get_test()
-        trans_train, trans_test = FoxDataset(X=train), FoxDataset(X=test)
-       
-        self.train_loader = DataLoader(
-            trans_train, 
-            self.batch_size, 
-            shuffle=True, 
-            num_workers=3, 
-            pin_memory=True
-            ) 
+        self.train_loader = self.img_process.data_loaders['train']
+        self.test_loader = self.img_process.data_loaders['test']
         
-        self.test_loader = DataLoader(
-            trans_test, 
-            self.batch_size, 
-            shuffle=True, 
-            num_workers=3, 
-            pin_memory=True
-            ) 
+    def get_version(self):
+        return self.version
     
-    def get_train_loader(self):
-        return self.train_loader
-    
-    def get_test_loader(self):
-        return self.test_loader
+    def set_version(self, version):
+        self.version = version
         
-    def count_parameters(self, model):
-        return sum(param.numel() for param in model.parameters())
+    def count_neurons(self):
+        """The number of neurons at a given convolutional layer is given by
+        floor((spatial_dimension + 2*padding - kernel)/stride + 1).
+
+        Returns:
+            int: number of neurons 
+        """
+        #  dimensions of resized images
+        input_size = 64 
+        #  3 channels, image of size 64x64, with stride 2
+        first_layer = input_size * input_size/2 * input_size/2 
+        #  192 output channels, kernel size 3x3, stride 1, padding 1
+        #  dimensions halved due to pooling
+        second_layer = 192 * input_size/(2**2) * input_size/(2**2) 
+        #  384 output channels, kernel size 3x3, stride 1 padding 1
+        #  dimension halved again due to pooling
+        third_layer = 384 * input_size/(2**3) * input_size/(2**3)
+        #  256 output channels, kernel size 3x3, stride 1, padding 1
+        fourth_layer = 256 * input_size/(2**4) * input_size/(2**4)
+        #  256 output channels, kernel size 3x3, stride 1, padding 1
+        fifth_layer = 256 * input_size/(2**5) * input_size/(2**5)
+        
+        final_layer = 256 * 2 * 2
+        
+        #  two fully connected layers
+        fully_conn_layer1 = fully_con_layer2 = 4096
+        
+        #  output layer
+        output_layer = 2
+        
+        neurons = first_layer + second_layer + third_layer + fourth_layer + fifth_layer + final_layer \
+            + fully_conn_layer1 + fully_con_layer2 + output_layer
+            
+        return math.floor(neurons)
+         
+    def count_parameters(self):
+        """Returns the number of trainable parameters of the model
+
+        Args:
+            model (utils.FoxCNN): the convolutional neural network
+
+        Returns:
+            int: the number of trainanble parameters
+        """
+        return sum(param.numel() for param in self.model.parameters() if param.requires_grad)
         
     def get_model(self):
+        """ Returns the model 
+        
+        Returns:
+            utils.FoxCNN: the convolutional neural network 
+        """
         return self.model
         
     def update_ver(self):
+        """ Updates the version of the model """
         self.version += 1
          
     def save_model(self):
-        path = './fox-ver-' + self.version + '.pth'
+        """ Saves the pre-trained CNN model """
+        path = 'fox-brain-ver-' + self.version + '.pth'
         torch.save(self.model.state_dict(), path)
         
     def load_data(self):
         raise NotImplementedError
-        
-    def test_accuracy(self):
-        """
-        Function to test the model with the test dataset and print accuracy
-        for the test images.
-        """
-        self.model.eval()
-        
-        accuracy = 0
-        total = 0
-        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        
-        for images, labels in enumerate(self.test_loader):
-            #  run the model on the test set to predict labels
-            outputs = self.model(images.to(device))
-            
-            #  the label with the highest energy will be our prediction
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            accuracy += (predicted == labels.to(device).sum().item())
-        
-        #  compute accuracy over all test images            
-        accuracy = (100 * accuracy / total)
-        
-        return (accuracy)
     
-    def train(self, num_epochs):
-        """
-        Training function that loops over data iterator and feeds 
-        the inputs to the network and optimise. 
+    def calculate_accuracy(self, y_pred, y):
+        """Computes the accuracy of the CNN
+
         Args:
-            num_epochs (int): number of epochs 
+            y_pred (torch.Tensor): predictions generated by the model
+            y (torch.Tensor): actual labels of the model
+
+        Returns:
+            float: accuracy of the model
         """
-        best_accuracy = 0.0
+        top_pred = y_pred.argmax(1, keepdim=True)
+        correct = top_pred.eq(y.view_as(top_pred)).sum()
+        accuracy = correct.float() / y.shape[0]
+        
+        return accuracy
+        
+    def train(self):
+        """ Trains the model over one epoch """
+        
+        epoch_loss = 0.0
+        epoch_accuracy = 0.0
         
         #  define execution device
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         #  convert model parameters and buffers to CPU or Cuda
         self.model.to(device)
-        for epoch in range(num_epochs):
-            running_loss = 0.0
-            i = 0
-            for inputs, labels in enumerate(self.train_loader):
-                #  obtain inputs
-                # images = Variable(images.to(device))
-                # labels = Variable(labels.to(device))
+        for inputs, labels in tqdm(self.train_loader, leave=False):
+            inputs = inputs.to(self.device)
+            labels = labels.to(self.device)
+            
+            #  zero parameter gradients
+            self.optimiser.zero_grad()
+            
+            #  predict classes using images from the training set
+            #  outputs returns a tuple, first entry is the actual output
+            outputs, _ = self.model(inputs)
+            # _, pred = torch.max(outputs, 1)
+            
+            #  compute the loss based on model output and real outputs
+            loss = self.loss(outputs, labels) 
+            
+            accuracy = self.calculate_accuracy(outputs, labels)
+            
+            #  backpropagate the loss
+            loss.backward()
+            self.optimiser.step()
+            
+            epoch_loss += loss.item()
+            epoch_accuracy += accuracy.item()
+        
+        return epoch_loss / len(self.train_loader), epoch_accuracy / len(self.train_loader)
+        
+    def evaluate(self):
+        
+        epoch_loss = 0.0
+        epoch_accuracy = 0.0
+        
+        #  eval() turns off the Dropout step in the CNN
+        self.model.eval()
+        
+        with torch.no_grad():
+            for (inputs, labels) in tqdm(self.test_loader, leave=False):
+                inputs = inputs.to(self.device)
+                labels = labels.to(self.device)
                 
-                #  zero parameter gradients
-                self.optimiser.zero_grad()
+                outputs, _ = self.model(inputs)
                 
-                #  predict classes using images from the training set
-                outputs = self.model(inputs)
-                
-                #  compute the loss based on model output and real labels
                 loss = self.loss(outputs, labels)
                 
-                #  backpropagate the loss
-                loss.backward()
+                accuracy = self.calculate_accuracy(outputs, labels)
                 
-                #  print statistics for every 100 images
-                running_loss += loss.item()
-                if i % 100 == 99:
-                    print ('[%d, %5d] loss: %.3f' % 
-                           (epoch + 1, i + 1, running_loss / 100))
-                running_loss = 0.0
-                i += 1
-            
-            # compute and print average accuracy for this epoch when tested over all test images                
-            accuracy = self.test_accuracy()
-            print(f'For epoch {epoch + 1}, the test accuracy over the whole set is {accuracy}')
-            
-            #  save the model that has the best accuracy
-            if accuracy > best_accuracy:
+                epoch_loss += loss.item()
+                epoch_accuracy += accuracy.item()
+                
+        return epoch_loss / len(self.test_loader), epoch_accuracy / len(self.test_loader)
+    
+    def epoch_eval_time(self, start_time, end_time):
+        """Displays how long it takes to train each epoch
+
+        Args:
+            start_time (time): start time
+            end_time (time): end time
+
+        Returns:
+            (time, time): minutes, seconds, elapsed
+        """
+        elapsed_time = end_time - start_time
+        elapsed_mins = int(elapsed_time / 60)
+        elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
+        return elapsed_mins, elapsed_secs
+    
+    def train_over_epoch(self, num_epochs):
+        """Train model over number of epochs, and 
+        saves the model that has the best validation accuracy.
+
+        Args:
+            num_epochs (int): number of epochs 
+        """
+        best_val_loss = float('inf')
+        
+        for epoch in range(num_epochs):
+            start_time = time.monotonic()
+        
+            train_loss, train_accuracy = self.train()
+            val_loss, val_accuracy = self.evaluate()
+        
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 self.save_model()
-                best_accuracy = accuracy
+            
+            end_time = time.monotonic()
+            
+            epoch_mins, epoch_secs = self.epoch_eval_time(start_time, end_time)
+            
+            print(f'Epoch: {epoch+1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s')
+            print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_accuracy * 100:.2f}%')
+            print(f'\t Val. Loss: {val_loss:.3f} |  Val. Acc: {val_accuracy * 100:.2f}%')
 
 
 if __name__ == '__main__':
     trainer = Trainer()
     
-    trainer.train(5)
+    print('{:,}'.format(trainer.count_parameters()))
+    print('{:,}'.format(trainer.count_neurons()))
     
-    trainer.test_accuracy()
+    num_epochs = 15
     
-    model = trainer.get_model()
-    trainer.save_model()
-    
+    trainer.train_over_epoch(num_epochs=num_epochs)
