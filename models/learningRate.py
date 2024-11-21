@@ -98,7 +98,7 @@ class LearningRateFinder:
             if loss > diverge_th * best_loss:
                 break
         
-        self.model.load_state_dict(torch.load('init_params.pt'))
+        self.model.load_state_dict(torch.load('init_params.pt', weights_only=True))
         
         return lrs, losses
     

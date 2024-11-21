@@ -5,9 +5,10 @@ import torch
 from tqdm import tqdm
 
 import torch.nn as nn
-from torch.nn.utils import parameters_to_vector
 
 from torch.optim import Adam
+
+from learningRate import LearningRateFinder
 
 try:
     from utils.processImage import ImageProcessor
@@ -20,7 +21,7 @@ except ModuleNotFoundError:
 
 class FoxCNN(nn.Module):
     def __init__(self, output_dim):
-        """Convolutional neural network that recognises pictures of foxes
+        """ Convolutional neural network that recognises pictures of foxes
 
         Args:
             output_dim (int): number of classes 
@@ -64,11 +65,12 @@ class FoxCNN(nn.Module):
         
     
 class Trainer:
+    """ Class that trains a CNN on dataset """
     def __init__(self):
         self.model = FoxCNN(output_dim=2)  #  convolutional neural network
         self.loss = nn.CrossEntropyLoss()  #  cross-entropy loss
-        #  Adam optimiser
-        self.optimiser = Adam(self.model.parameters(), lr=0.001, weight_decay=.0001)
+        self.optimiser = None
+        
         self.batch_size = 64
         
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -81,10 +83,16 @@ class Trainer:
         self.test_loader = self.img_process.data_loaders['test']
         
     def get_version(self):
+        """ Returns the current version of the bot """
         return self.version
     
     def set_version(self, version):
+        """ Defines new version of the model """
         self.version = version
+        
+    def update_version(self):
+        """ Updates model version number by incrementing it by one """
+        self.version += 1
         
     def count_neurons(self):
         """The number of neurons at a given convolutional layer is given by
@@ -131,6 +139,54 @@ class Trainer:
             int: the number of trainanble parameters
         """
         return sum(param.numel() for param in self.model.parameters() if param.requires_grad)
+    
+    def _get_optimal_lr(self):
+        """ Calculates the optimal learning rate (LR) by starting with a small 
+        learning rate, in this case 1e-7, and then exponentiall increases it to 
+        optimise the loss function. 
+        
+        At the end, it returns the LR corresponding to the smallest loss
+        
+        Returns:
+            float: the optimal learning rate
+        """
+        START_LR = 1e-7
+        
+        optimiser = Adam(self.model.parameters(), lr=START_LR)
+    
+        lr_finder = LearningRateFinder(self.model, optimiser, self.loss)
+    
+        self.model.to(lr_finder.get_device())
+    
+        self.loss = self.loss.to(lr_finder.get_device())
+        
+        #  the end LR is 10, and the number of iterations is 100 by default
+        #  see learningRate.py for more details
+        lrs, losses = lr_finder.range_test(trainer.train_loader)
+
+        lr_dict = {}
+    
+        for i in range(len(lrs)):
+            lr_dict[lrs[i]] = losses[i]
+    
+        lr = max(lr_dict, key=lr_dict.get)
+        
+        return lr
+    
+    def get_optimiser(self):
+        """ Retuirns the optimiser that we are using, with optimal learning rate
+        
+        Returns:
+            torch.optim.Adam: adam optimiser with optimised learning-rate
+        """
+        if self.optimiser is None:
+            lr = self._get_optimal_lr()
+            print(f'Optimal LR: {lr}')
+            self.optimiser = Adam(self.model.parameters(), lr=lr)
+            
+            return self.optimiser
+        else:
+            return self.optimiser
         
     def get_model(self):
         """ Returns the model 
@@ -139,18 +195,11 @@ class Trainer:
             utils.FoxCNN: the convolutional neural network 
         """
         return self.model
-        
-    def update_ver(self):
-        """ Updates the version of the model """
-        self.version += 1
          
     def save_model(self):
         """ Saves the pre-trained CNN model """
-        path = 'fox-brain-ver-' + self.version + '.pth'
+        path = 'fox-brain-ver-' + str(self.version) + '.pth'
         torch.save(self.model.state_dict(), path)
-        
-    def load_data(self):
-        raise NotImplementedError
     
     def calculate_accuracy(self, y_pred, y):
         """Computes the accuracy of the CNN
@@ -174,16 +223,20 @@ class Trainer:
         epoch_loss = 0.0
         epoch_accuracy = 0.0
         
+        optimiser = self.get_optimiser()
+        
         #  define execution device
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        
         #  convert model parameters and buffers to CPU or Cuda
         self.model.to(device)
+        
         for inputs, labels in tqdm(self.train_loader, leave=False):
             inputs = inputs.to(self.device)
             labels = labels.to(self.device)
             
             #  zero parameter gradients
-            self.optimiser.zero_grad()
+            optimiser.zero_grad()
             
             #  predict classes using images from the training set
             #  outputs returns a tuple, first entry is the actual output
@@ -197,7 +250,7 @@ class Trainer:
             
             #  backpropagate the loss
             loss.backward()
-            self.optimiser.step()
+            optimiser.step()
             
             epoch_loss += loss.item()
             epoch_accuracy += accuracy.item()
@@ -205,8 +258,14 @@ class Trainer:
         return epoch_loss / len(self.train_loader), epoch_accuracy / len(self.train_loader)
         
     def evaluate(self):
-        
+        """ Evaluates the model on the testing dataset
+
+        Returns:
+            tuple(float, float): (loss in this epoch, accuracy in this epoch)
+        """
+        # loss in this epoch
         epoch_loss = 0.0
+        # accuracy in this epoch
         epoch_accuracy = 0.0
         
         #  eval() turns off the Dropout step in the CNN
@@ -217,6 +276,7 @@ class Trainer:
                 inputs = inputs.to(self.device)
                 labels = labels.to(self.device)
                 
+                #  model outputs tuple of (outputs, label). Only want outputs
                 outputs, _ = self.model(inputs)
                 
                 loss = self.loss(outputs, labels)
@@ -273,9 +333,6 @@ class Trainer:
 
 if __name__ == '__main__':
     trainer = Trainer()
-    
-    print('{:,}'.format(trainer.count_parameters()))
-    print('{:,}'.format(trainer.count_neurons()))
     
     num_epochs = 15
     
