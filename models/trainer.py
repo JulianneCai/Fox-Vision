@@ -28,7 +28,6 @@ class FoxCNN(nn.Module):
         """
         super().__init__()
         
-        
         self.features = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=2, padding=1),  # in_channels, out_channels, kernel_size, stride, padding
             nn.MaxPool2d(kernel_size=2),  # kernel_size
@@ -52,24 +51,27 @@ class FoxCNN(nn.Module):
             nn.Dropout(0.5),
             nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
-            # nn.Sigmoid()
             nn.Linear(4096, output_dim),
         )
 
     def forward(self, x):
+        """ Feed-forward step 
+        
+        Args:
+            x (torch.Tensor): input
+        """
         x = self.features(x)
         h = x.view(x.size(0), -1)
         x = self.classifier(h)
         return x, h
-   
-        
+    
     
 class Trainer:
     """ Class that trains a CNN on dataset """
     def __init__(self):
         self.model = FoxCNN(output_dim=2)  #  convolutional neural network
         self.loss = nn.CrossEntropyLoss()  #  cross-entropy loss
-        self.optimiser = None
+        self.optimiser = None #  set it to None, will optimiser LR later
         
         self.batch_size = 64
         
@@ -140,10 +142,35 @@ class Trainer:
         """
         return sum(param.numel() for param in self.model.parameters() if param.requires_grad)
     
+    def _initialise_parameters(self, param):
+        """Initialise parameters of our model
+        
+        Initialise parameters by initialising weights from a normal 
+        distribution with a standard deviation given by gain/sqrt(fan mode).
+        Here, gain = sqrt(2) since we set initlisation function to ReLU. 
+        
+        Fan mode can be either fan_in, fan_out, which is the number of connections 
+        coming into and out of the layer.
+        
+        For linear layers, we get a normal distribution with standard deviation given by 
+        gain * sqrt(2 /(fan_in + fan_out)).
+        
+        Doing this initialises our input data to have a mean of 0 and a standard deviation of 1
+
+        Args:
+            param (torch.nn.parameter.Parameter): parameters of the model 
+        """
+        if isinstance(param, nn.Conv2d):
+            nn.init.kaiming_normal_(param.weight.data, nonlinearity='relu')
+            nn.init.constant_(param.bias.data, 0)
+        elif isinstance(param, nn.Linear):
+            nn.init.xavier_normal_(param.weight.data, gain=nn.init.calculate_gain('relu'))
+            nn.init.constant_(param.bias.data, 0)
+    
     def _get_optimal_lr(self):
         """ Calculates the optimal learning rate (LR) by starting with a small 
         learning rate, in this case 1e-7, and then exponentiall increases it to 
-        optimise the loss function. 
+        optimise the loss function. See learningRate.py for more info
         
         At the end, it returns the LR corresponding to the smallest loss
         
@@ -174,7 +201,7 @@ class Trainer:
         return lr
     
     def get_optimiser(self):
-        """ Retuirns the optimiser that we are using, with optimal learning rate
+        """ Returns the optimiser that we are using, with optimal learning rate
         
         Returns:
             torch.optim.Adam: adam optimiser with optimised learning-rate
@@ -228,6 +255,8 @@ class Trainer:
         #  define execution device
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         
+        self.model.apply(self._initialise_parameters)
+        
         #  convert model parameters and buffers to CPU or Cuda
         self.model.to(device)
         
@@ -258,7 +287,7 @@ class Trainer:
         return epoch_loss / len(self.train_loader), epoch_accuracy / len(self.train_loader)
         
     def evaluate(self):
-        """ Evaluates the model on the testing dataset
+        """Evaluates the model on the testing dataset
 
         Returns:
             tuple(float, float): (loss in this epoch, accuracy in this epoch)
@@ -304,7 +333,9 @@ class Trainer:
         return elapsed_mins, elapsed_secs
     
     def train_over_epoch(self, num_epochs):
-        """Train model over number of epochs, and 
+        """Trains the model
+        
+        Train model over number of epochs, and 
         saves the model that has the best validation accuracy.
 
         Args:
