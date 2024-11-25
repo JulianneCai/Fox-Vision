@@ -45,10 +45,10 @@ class FoxCNN(nn.Module):
         )
 
         self.classifier = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(256 * 4 * 4, 4096), # using batch_size 4
+            # nn.Dropout(0.5),
+            nn.Linear(256 * 4 * 4, 4096), 
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
+            # nn.Dropout(0.5),
             nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
             nn.Linear(4096, output_dim),
@@ -73,12 +73,13 @@ class Trainer:
         self.loss = nn.CrossEntropyLoss()  #  cross-entropy loss
         self.optimiser = None #  set it to None, will optimiser LR later
         
-        self.batch_size = 64
+        # self.batch_size = 64
+        self.batch_size = 256
         
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         self.version = 0
-        
+       
         self.img_process = ImageProcessor()
         
         self.train_loader = self.img_process.data_loaders['train']
@@ -87,14 +88,23 @@ class Trainer:
     def get_version(self):
         """ Returns the current version of the bot """
         return self.version
-    
-    def set_version(self, version):
-        """ Defines new version of the model """
-        self.version = version
         
     def update_version(self):
         """ Updates model version number by incrementing it by one """
         self.version += 1
+        
+    def get_model(self):
+        """ Returns the model 
+        
+        Returns:
+            utils.FoxCNN: the convolutional neural network 
+        """
+        return self.model
+         
+    def save_model(self):
+        """ Saves the pre-trained CNN model """
+        path = 'fox-brain-ver-' + str(self.version) + '.pth'
+        torch.save(self.model.state_dict(), path)
         
     def count_neurons(self):
         """The number of neurons at a given convolutional layer is given by
@@ -167,17 +177,20 @@ class Trainer:
             nn.init.xavier_normal_(param.weight.data, gain=nn.init.calculate_gain('relu'))
             nn.init.constant_(param.bias.data, 0)
     
-    def _get_optimal_lr(self):
+    def _get_optimal_lr(self, step_flag):
         """ Calculates the optimal learning rate (LR) by starting with a small 
         learning rate, in this case 1e-7, and then exponentiall increases it to 
         optimise the loss function. See learningRate.py for more info
         
         At the end, it returns the LR corresponding to the smallest loss
         
+        Args:
+            step_flag (str): one of 'exp' or 'lin'. Whether to use linear or exponential LR finder.
+        
         Returns:
             float: the optimal learning rate
         """
-        START_LR = 1e-7
+        START_LR = 1e-8
         
         optimiser = Adam(self.model.parameters(), lr=START_LR)
     
@@ -189,7 +202,9 @@ class Trainer:
         
         #  the end LR is 10, and the number of iterations is 100 by default
         #  see learningRate.py for more details
-        lrs, losses = lr_finder.range_test(trainer.train_loader)
+        lrs, losses = lr_finder.range_test(trainer.train_loader, 
+                                           step_flag='exp',
+                                           num_iter=300)
 
         lr_dict = {}
     
@@ -198,35 +213,25 @@ class Trainer:
     
         lr = max(lr_dict, key=lr_dict.get)
         
-        return lr
+        return lr / 100
     
-    def get_optimiser(self):
+    def get_optimiser(self, linear=False):
         """ Returns the optimiser that we are using, with optimal learning rate
         
+        Args:
+            linear (bool): whether or not to use linear LR finder. Defaults to False
+        
         Returns:
-            torch.optim.Adam: adam optimiser with optimised learning-rate
+            torch.optim.Optimizer: adam optimiser with optimised learning-rate
         """
         if self.optimiser is None:
-            lr = self._get_optimal_lr()
+            lr = self._get_optimal_lr(linear)
             print(f'Optimal LR: {lr}')
             self.optimiser = Adam(self.model.parameters(), lr=lr)
             
             return self.optimiser
         else:
             return self.optimiser
-        
-    def get_model(self):
-        """ Returns the model 
-        
-        Returns:
-            utils.FoxCNN: the convolutional neural network 
-        """
-        return self.model
-         
-    def save_model(self):
-        """ Saves the pre-trained CNN model """
-        path = 'fox-brain-ver-' + str(self.version) + '.pth'
-        torch.save(self.model.state_dict(), path)
     
     def calculate_accuracy(self, y_pred, y):
         """Computes the accuracy of the CNN
@@ -250,7 +255,8 @@ class Trainer:
         epoch_loss = 0.0
         epoch_accuracy = 0.0
         
-        optimiser = self.get_optimiser()
+        #  search for optimal learning rate (LR) using linear LR finder
+        optimiser = self.get_optimiser(linear=False)
         
         #  define execution device
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -357,13 +363,15 @@ class Trainer:
             
             epoch_mins, epoch_secs = self.epoch_eval_time(start_time, end_time)
             
-            print(f'Epoch: {epoch+1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s')
+            print(f'Epoch: {epoch+1:02} | Epoch Eval. Time: {epoch_mins}m {epoch_secs}s')
             print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_accuracy * 100:.2f}%')
             print(f'\t Val. Loss: {val_loss:.3f} |  Val. Acc: {val_accuracy * 100:.2f}%')
 
 
 if __name__ == '__main__':
     trainer = Trainer()
+    
+    print(trainer.count_parameters(), trainer.count_neurons())
     
     num_epochs = 15
     
