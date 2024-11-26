@@ -9,10 +9,7 @@ import skimage
 from PIL import Image
 
 from torch.utils.data import Dataset, DataLoader, random_split
-# from torchvision.utils import make_grid
-from torchvision import datasets
 import torchvision.transforms as transforms
-
 
 DATA_DIR = 'fox-data/train'
 
@@ -53,7 +50,8 @@ class Rescale(object):
 
 
 class RandomCrop(object):
-    """Randomly crops the sample image
+    """Randomly crops the sample image for numpy.ndarray RGB matrices.
+    The PyTorch version of this function only does it for PIL images
 
     Args:
         size (tuple or int): desired output size. If int, square crop is performed.
@@ -70,6 +68,14 @@ class RandomCrop(object):
             raise ValueError(f'size must be type int or tuple, but got {type(size)}')
         
     def __call__(self, image):
+        """Randomly crops the image
+
+        Args:
+            image (numpy.ndarray): the RGB matrix of the image
+
+        Returns:
+            numpy.ndarray: the randomly cropped RGB matrix of the image 
+        """
         height, width = image.shape[:2]
         
         new_height, new_width = self.size
@@ -171,11 +177,6 @@ class ImageProcessor:
             transform=self.transform
         )
         
-        # self.img_datasets = {
-        #     x: datasets.ImageFolder(os.path.join(DATA_DIR, x), self.transform)
-        #     for x in ['train', 'test']
-        # }
-        
         self.data_loader = DataLoader(
             self.img_datasets,
             batch_size=self.batch_size,
@@ -189,8 +190,7 @@ class ImageProcessor:
         train_size=None, 
         test_size=None,
         shuffle=True,
-        num_workers=0,
-        batch_size=64
+        num_workers=0
         ):
         """Splits data loader into training and testing dataloaders
 
@@ -200,7 +200,6 @@ class ImageProcessor:
             test_size (float, optional): size of testing dataset. Defaults to None, in which case it is set to 0.2.
             shuffle (bool, optional): whether to shuffle the training sets. Defaults to True.
             num_workers (int): number of workers for the dataloader. Defaults to 0.
-            batch_size (int): the batch size of the images
 
         Returns:
             tuple(torch.utils.DataLoader, torch.utils.DataLoader): tuple of training and testing dataloaders, in that order
@@ -225,49 +224,17 @@ class ImageProcessor:
         
         train_loader = DataLoader(
             train_data,
-            batch_size=batch_size,
+            batch_size=self.batch_size,
             shuffle=shuffle,
             num_workers=num_workers
         )
         
         test_loader = DataLoader(
             test_data,
-            batch_size=batch_size,
+            batch_size=self.batch_size,
             shuffle=shuffle,
             num_workers=num_workers
         )
         
         return train_loader, test_loader
         
-
-if __name__ == '__main__': 
-    IMG_SIZE = 64
-    BATCH_SIZE = 64
-    transform = transforms.Compose(
-        [
-            Rescale(IMG_SIZE),
-            RandomCrop(IMG_SIZE),
-            ToTensor()
-        ]
-    )
-    dataset = FoxDataset(
-        root_dir=DATA_DIR,
-        transform=transform
-        )
-    
-    ip = ImageProcessor(batch_size=BATCH_SIZE, img_size=IMG_SIZE)
-    
-    train_dl, test_dl = ip.train_test_split_dl(
-        dataset,
-        train_size=0.8,
-        test_size=0.2,
-        shuffle=True,
-        batch_size=64,
-        num_workers=3
-    )
-    
-    for i, (inputs, labels) in enumerate(train_dl, 0):
-        print(inputs.size(), labels.size())
-        
-        if i == 3:
-            break
