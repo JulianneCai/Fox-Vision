@@ -16,30 +16,6 @@ import torchvision.transforms as transforms
 
 DATA_DIR = 'fox-data/train'
 
-# class ImageProcessor:
-#     """Decomposes an image into a matrix of RGB values at each pixel"""
-#     def __init__(self):
-#         self.batch_size = 4
-#         self.transform = trans.Compose([
-#             # trans.ToPILImage(),
-#             trans.Resize(size=(IMG_SIZE, IMG_SIZE)),
-#             trans.ToTensor(),
-#             trans.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-#         ])
-        
-#         self.img_datasets = {
-#             x: datasets.ImageFolder(os.path.join(DATA_DIR, x), self.transform)
-#             for x in ['train', 'test']
-#         }
-        
-#         self.data_loaders = {x: DataLoader(self.img_datasets[x], batch_size=self.batch_size, 
-#                                            shuffle=True, num_workers=0)
-#                              for x in ['train', 'test']}
-        
-#         self.dataset_sizes = {x: len(self.img_datasets[x]) for x in ['train', 'test']}
-#         self.class_names = self.img_datasets['train'].classes
-        
-#         self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
 class Rescale(object):
     """Rescales the iamge to a given size
@@ -156,50 +132,78 @@ class FoxDataset(Dataset):
             key = key.tolist()
         img_path, class_name = self.data[key]
         
-        image = np.array(Image.open(img_path).convert('RGB'))
+        #  dtype must be float32 otherwise Conv2d will complain
+        image = np.array(Image.open(img_path).convert('RGB'), dtype=np.float32)
         
         class_id = self.class_map[class_name] 
         
         #  class_id needs to be tensor otherwise DataLoader gets upset
-        class_id = torch.tensor([class_id])
+        class_id = torch.tensor(class_id)
         
         if self.transform:
             image = self.transform(image)
             
-        return image, class_name
+        return image, class_id
 
         
 class ImageProcessor:
     """Decomposes an image into a matrix of RGB values at each pixel"""
-    def __init__(self):
-        self.batch_size = 4
+    def __init__(self, batch_size, img_size):
+        self.batch_size = batch_size
+        
+        if isinstance(img_size, int) or isinstance(img_size, tuple):
+            self.img_size = img_size
+        else:
+            raise ValueError(f'expected img_size to be of type int or tuple(int, int), but got {type(img_size)}')
+        
+        self.transform = transforms.Compose(
+            [
+                Rescale(self.img_size),
+                RandomCrop(self.img_size),
+                ToTensor()
+            ]
+        )
+        
         self.classes = os.listdir(DATA_DIR)
         
+        self.img_datasets = FoxDataset(
+            root_dir=DATA_DIR,
+            transform=self.transform
+        )
         
-        self.img_datasets = {
-            x: datasets.ImageFolder(os.path.join(DATA_DIR, x), self.transform)
-            for x in ['train', 'test']
-        }
+        # self.img_datasets = {
+        #     x: datasets.ImageFolder(os.path.join(DATA_DIR, x), self.transform)
+        #     for x in ['train', 'test']
+        # }
         
-        self.data_loaders = {x: DataLoader(self.img_datasets[x], batch_size=self.batch_size, 
-                                           shuffle=True, num_workers=0)
-                             for x in ['train', 'test']}
-        
-        self.dataset_sizes = {x: len(self.img_datasets[x]) for x in ['train', 'test']}
-        self.class_names = self.img_datasets['train'].classes
-        
-        self.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        self.data_loader = DataLoader(
+            self.img_datasets,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=3
+        )
     
-    def train_test_split(self, data, train_size=None, test_size=None):
-        """Splits data into training and testing dataset
+    def train_test_split_dl(
+        self, 
+        dataset, 
+        train_size=None, 
+        test_size=None,
+        shuffle=True,
+        num_workers=0,
+        batch_size=64
+        ):
+        """Splits data loader into training and testing dataloaders
 
         Args:
-            data (numpy.ndarray): RGB image datasets 
+            dataset (torch.utils.data.Dataset): RGB image datasets 
             train_size (float, optional): size of training dataset. Defaults to None, in which case it is set to 0.8.
             test_size (float, optional): size of testing dataset. Defaults to None, in which case it is set to 0.2.
+            shuffle (bool, optional): whether to shuffle the training sets. Defaults to True.
+            num_workers (int): number of workers for the dataloader. Defaults to 0.
+            batch_size (int): the batch size of the images
 
         Returns:
-            tuple(numpy.ndarray, numpy.ndarray): tuple of training and testing dataset, in that order
+            tuple(torch.utils.DataLoader, torch.utils.DataLoader): tuple of training and testing dataloaders, in that order
         """
         if train_size and test_size is None:
             train_size = 0.8
@@ -217,13 +221,28 @@ class ImageProcessor:
         elif train_size <= 0 or test_size <= 0:
             raise ValueError(f'train_size and test_size must both be less than 0')
             
-        train_data, test_data = random_split(data, [train_size, test_size])
+        train_data, test_data = random_split(dataset, [train_size, test_size])
         
-        return train_data, test_data
+        train_loader = DataLoader(
+            train_data,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers
+        )
+        
+        test_loader = DataLoader(
+            test_data,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers
+        )
+        
+        return train_loader, test_loader
         
 
 if __name__ == '__main__': 
     IMG_SIZE = 64
+    BATCH_SIZE = 64
     transform = transforms.Compose(
         [
             Rescale(IMG_SIZE),
@@ -236,8 +255,19 @@ if __name__ == '__main__':
         transform=transform
         )
     
-    for i, sample in enumerate(dataset, 0):
-        print(i, sample[0].size(), sample[1])
-
+    ip = ImageProcessor(batch_size=BATCH_SIZE, img_size=IMG_SIZE)
+    
+    train_dl, test_dl = ip.train_test_split_dl(
+        dataset,
+        train_size=0.8,
+        test_size=0.2,
+        shuffle=True,
+        batch_size=64,
+        num_workers=3
+    )
+    
+    for i, (inputs, labels) in enumerate(train_dl, 0):
+        print(inputs.size(), labels.size())
+        
         if i == 3:
             break
