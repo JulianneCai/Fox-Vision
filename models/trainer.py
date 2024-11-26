@@ -13,15 +13,13 @@ from learningRate import LearningRateFinder
 
 try:
     from utils.processImage import ImageProcessor, FoxDataset, Rescale, RandomCrop, ToTensor
+    from utils.const import DATA_DIR, BATCH_SIZE, IMG_SIZE
 except ModuleNotFoundError:
     import sys
     sys.path.append(sys.path[0] + '/..')
     from utils.processImage import ImageProcessor, FoxDataset, Rescale, RandomCrop, ToTensor
+    from utils.const import DATA_DIR, BATCH_SIZE, IMG_SIZE
 
-
-DATA_DIR = 'fox-data/train'
-BATCH_SIZE = 64 
-IMG_SIZE = 64
 
 class FoxCNN(nn.Module):
     def __init__(self, output_dim):
@@ -49,13 +47,14 @@ class FoxCNN(nn.Module):
         )
 
         self.classifier = nn.Sequential(
-            # nn.Dropout(0.5),
-            nn.Linear(256 * 4 * 4, 4096), 
+            nn.Dropout(0.5),
+            nn.Linear(256 * 4 * 4, IMG_SIZE ** 2), 
             nn.ReLU(inplace=True),
-            # nn.Dropout(0.5),
-            nn.Linear(4096, 4096),
+            nn.Dropout(0.5),
+            nn.Linear(IMG_SIZE ** 2, IMG_SIZE ** 2),
+            # nn.Linear(4096, 4096),
             nn.ReLU(inplace=True),
-            nn.Linear(4096, output_dim),
+            nn.Linear(IMG_SIZE ** 2, output_dim),
         )
 
     def forward(self, x):
