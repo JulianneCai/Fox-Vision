@@ -54,17 +54,23 @@ class LinearLearningRate(_LRScheduler):
         return [base_lr + r * (self.end_lr - base_lr) 
                 for base_lr in self.base_lrs]
 
+
 class IteratorWrapper:
+    """A thing that iterates
+    
+    Args:
+        iterator: thing that iterates
+    """
     def __init__(self, iterator):
         self.iterator = iterator
         self._iterator = iter(iterator)    
     
     def __next__(self):
         try: 
-            _, (inputs, labels) = next(enumerate(self._iterator), 0)
+            inputs, labels = next(self._iterator)
         except StopIteration:
             self._iterator = iter(self.iterator)
-            _, (inputs, labels), *_ = next(enumerate(self._iterator), 0)
+            inputs, labels, *_ = next(self._iterator)
 
         return inputs, labels
     
@@ -73,6 +79,13 @@ class IteratorWrapper:
         
 
 class LearningRateFinder:
+    """Finds optimal learning rate
+    
+    Args:
+        model (torch.nn.Module): the convolutional neural network
+        optimiser (torch.optim.Optimizer): optimiser for loss function
+        criterion (torch.nn.something): choice of loss function (e.g. CrossEntropyLoss)
+    """
     def __init__(self, model, optimiser, criterion):
         self.model = model
         self.optimiser = optimiser
