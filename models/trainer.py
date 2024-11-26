@@ -7,17 +7,21 @@ from tqdm import tqdm
 import torch.nn as nn
 
 from torch.optim import Adam
+import torchvision.transforms as transforms
 
 from learningRate import LearningRateFinder
 
 try:
-    from utils.processImage import ImageProcessor
+    from utils.processImage import ImageProcessor, FoxDataset, Rescale, RandomCrop, ToTensor
 except ModuleNotFoundError:
     import sys
     sys.path.append(sys.path[0] + '/..')
-    from utils.processImage import ImageProcessor
+    from utils.processImage import ImageProcessor, FoxDataset, Rescale, RandomCrop, ToTensor
 
 
+DATA_DIR = 'fox-data/train'
+BATCH_SIZE = 64 
+IMG_SIZE = 64
 
 class FoxCNN(nn.Module):
     def __init__(self, output_dim):
@@ -26,7 +30,7 @@ class FoxCNN(nn.Module):
         Args:
             output_dim (int): number of classes 
         """
-        super().__init__()
+        super(FoxCNN, self).__init__()
         
         self.features = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=2, padding=1),  # in_channels, out_channels, kernel_size, stride, padding
@@ -69,21 +73,47 @@ class FoxCNN(nn.Module):
 class Trainer:
     """ Class that trains a CNN on dataset """
     def __init__(self):
-        self.model = FoxCNN(output_dim=2)  #  convolutional neural network
-        self.loss = nn.CrossEntropyLoss()  #  cross-entropy loss
-        self.optimiser = None #  set it to None, will optimiser LR later
-        
-        # self.batch_size = 64
-        self.batch_size = 256
         
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         self.version = 0
-       
-        self.img_process = ImageProcessor()
+        self.transform = transforms.Compose(
+            [
+                Rescale(IMG_SIZE),
+                RandomCrop(IMG_SIZE),
+                ToTensor()
+            ]
+        )
         
-        self.train_loader = self.img_process.data_loaders['train']
-        self.test_loader = self.img_process.data_loaders['test']
+        self.dataset = FoxDataset(
+            root_dir=DATA_DIR,
+            transform=self.transform
+        )
+       
+        self.img_process = ImageProcessor(
+            batch_size=BATCH_SIZE,
+            img_size=IMG_SIZE
+        )
+        
+        self.train_dl, self.test_dl = self.img_process.train_test_split_dl(
+            self.dataset,
+            train_size=0.9,
+            test_size=0.1,
+            shuffle=True,
+            num_workers=3
+        )
+        #  convolutional neural network
+        #  self.img_process.classes gives a list of the classes (arctic-fox, red-fox)
+        #  output_dim is dimension of output layer, which is equal to number of classes
+        self.model = FoxCNN(output_dim=len(self.img_process.classes))  
+        
+        #  loss function we want to optimise 
+        self.loss = nn.CrossEntropyLoss()  
+        
+        #  initialises to None
+        #  we will use Adam optimiser, but learning rate will be tuned using LearningRateFinder class
+        #  (see learningRate.py)
+        self.optimiser = None 
         
     def get_version(self):
         """ Returns the current version of the bot """
@@ -103,12 +133,29 @@ class Trainer:
          
     def save_model(self):
         """ Saves the pre-trained CNN model """
-        path = 'fox-brain-ver-' + str(self.version) + '.pth'
+        path = 'fox-vision-ver-' + str(self.version) + '.pth'
         torch.save(self.model.state_dict(), path)
+        
+    def load_model(self, version):
+        """Loads pre-trained model of a specific version
+        
+        Args:
+            version (int): the version of the specific model
+
+        Returns:
+            utils.FoxCNN: the model
+        """
+        path = 'fox-vision-ver' + str(version) + '.pth'
+        model = torch.load(path, weights_only=False)
+        return model
         
     def count_neurons(self):
         """The number of neurons at a given convolutional layer is given by
         floor((spatial_dimension + 2*padding - kernel)/stride + 1).
+        
+        output_channels, padding, stride and kernel size are all hardcoded 
+        in the CNN, so the numbers here are hardcoded as well. The calculation
+        is done explicitly so that it's clear how the number is being calculated
 
         Returns:
             int: number of neurons 
@@ -148,7 +195,7 @@ class Trainer:
             model (utils.FoxCNN): the convolutional neural network
 
         Returns:
-            int: the number of trainanble parameters
+            int: the number of trainable parameters
         """
         return sum(param.numel() for param in self.model.parameters() if param.requires_grad)
     
@@ -202,9 +249,9 @@ class Trainer:
         
         #  the end LR is 10, and the number of iterations is 100 by default
         #  see learningRate.py for more details
-        lrs, losses = lr_finder.range_test(trainer.train_loader, 
-                                           step_flag='exp',
-                                           num_iter=300)
+        lrs, losses = lr_finder.range_test(trainer.train_dl, 
+                                           step_flag=step_flag,
+                                           num_iter=100)
 
         lr_dict = {}
     
@@ -215,19 +262,23 @@ class Trainer:
         
         return lr / 100
     
-    def get_optimiser(self, linear=False):
+    def get_optimiser(self, step_flag='exp'):
         """ Returns the optimiser that we are using, with optimal learning rate
         
         Args:
-            linear (bool): whether or not to use linear LR finder. Defaults to False
+            step_flag (str): must be one of ['exp', 'lin']. Whether or not to use linear or exponential LR finder. Defaults to 'exp'. 
         
         Returns:
             torch.optim.Optimizer: adam optimiser with optimised learning-rate
         """
         if self.optimiser is None:
-            lr = self._get_optimal_lr(linear)
+            lr = self._get_optimal_lr(step_flag)
             print(f'Optimal LR: {lr}')
-            self.optimiser = Adam(self.model.parameters(), lr=lr)
+            self.optimiser = Adam(
+                self.model.parameters(), 
+                lr=lr,
+                weight_decay=0.005
+                )
             
             return self.optimiser
         else:
@@ -256,7 +307,7 @@ class Trainer:
         epoch_accuracy = 0.0
         
         #  search for optimal learning rate (LR) using linear LR finder
-        optimiser = self.get_optimiser(linear=False)
+        optimiser = self.get_optimiser(step_flag='exp')
         
         #  define execution device
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -266,7 +317,7 @@ class Trainer:
         #  convert model parameters and buffers to CPU or Cuda
         self.model.to(device)
         
-        for inputs, labels in tqdm(self.train_loader, leave=False):
+        for inputs, labels in tqdm(self.train_dl, leave=False):
             inputs = inputs.to(self.device)
             labels = labels.to(self.device)
             
@@ -290,7 +341,7 @@ class Trainer:
             epoch_loss += loss.item()
             epoch_accuracy += accuracy.item()
         
-        return epoch_loss / len(self.train_loader), epoch_accuracy / len(self.train_loader)
+        return epoch_loss / len(self.train_dl), epoch_accuracy / len(self.train_dl)
         
     def evaluate(self):
         """Evaluates the model on the testing dataset
@@ -307,7 +358,7 @@ class Trainer:
         self.model.eval()
         
         with torch.no_grad():
-            for (inputs, labels) in tqdm(self.test_loader, leave=False):
+            for (inputs, labels) in tqdm(self.test_dl, leave=False):
                 inputs = inputs.to(self.device)
                 labels = labels.to(self.device)
                 
@@ -321,7 +372,7 @@ class Trainer:
                 epoch_loss += loss.item()
                 epoch_accuracy += accuracy.item()
                 
-        return epoch_loss / len(self.test_loader), epoch_accuracy / len(self.test_loader)
+        return epoch_loss / len(self.test_dl), epoch_accuracy / len(self.test_dl)
     
     def epoch_eval_time(self, start_time, end_time):
         """Displays how long it takes to train each epoch
@@ -376,3 +427,4 @@ if __name__ == '__main__':
     num_epochs = 15
     
     trainer.train_over_epoch(num_epochs=num_epochs)
+    
