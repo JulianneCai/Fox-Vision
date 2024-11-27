@@ -4,11 +4,14 @@ import numpy as np
 import torch
 import glob
 import sys
+import os
 
 from collections import defaultdict
 
-from utils.processImage import FoxDataset, ImageProcessor, Rescale, RandomCrop, ToTensor
+from utils.processImage import ImageProcessor, Rescale, RandomCrop, ToTensor
 from utils.const import DATA_DIR, IMG_SIZE, BATCH_SIZE
+
+from sklearn.preprocessing import OneHotEncoder
 
 from PIL import Image
 
@@ -20,14 +23,22 @@ class FoxDatabaseFormatting(Dataset):
     """ Collates information fox images stored locally for database insertion """
     def __init__(self):
         
-        self.class_map = {'red-fox': 1, 'arctic-fox': 0}
+        self.classes = os.listdir(DATA_DIR)
+        
+        # one_hot = OneHotEncoder()
+        
+        # one_hot.fit_transform(self.classes)
+        
+        # self.class_map = one_hot
+        
+        self.class_map = {'fox-girl': [0, 0, 0], 'red-fox': [0, 0, 1], 'arctic-fox': [0, 1, 0]}
         
         self.data = []
         
         self.transform = transforms.Compose(
             [
-                Rescale(IMG_SIZE),
-                RandomCrop(IMG_SIZE),
+                Rescale((IMG_SIZE, IMG_SIZE)),
+                # RandomCrop(IMG_SIZE),
                 ToTensor()
             ]
         )
@@ -69,13 +80,6 @@ class FoxDB:
             autocommit=True
             )
         self.cursor = self.conn.cursor()
-        self.transform = transforms.Compose(
-            [
-                Rescale(IMG_SIZE),
-                RandomCrop(IMG_SIZE),
-                ToTensor()
-            ]
-        )
         
         self.dataset = FoxDatabaseFormatting()
        
@@ -125,6 +129,7 @@ class FoxDB:
         )
         
     def drop_table(self):
+        """ Deletes the table """
         self.cursor.execute(
         """--sql
         DROP TABLE IF EXISTS Foxes;
@@ -133,6 +138,8 @@ class FoxDB:
         
     def insert_fox_train(self):
         """ Inserts binary fox images into SQL database """
+        
+        #  registers np.ndarray as a type that can be inserted into the database
         sqlite3.register_adapter(np.ndarray, self._adapt_array)
         
         #  counter for how many class_names we have
@@ -154,6 +161,8 @@ class FoxDB:
             
             img_id = class_name + '-' + str(class_counts[class_name])
             
+            print(f'Inserting {img_id}')
+            
             self.cursor.execute(
                 """--sql
                 INSERT INTO Foxes (img_id, class_id, class_name, rgb_mat) 
@@ -171,16 +180,46 @@ class FoxDB:
         
         self.cursor.execute(
         """--sql
-        SELECT rgb_mat FROM Foxes;
+        SELECT (rgb_mat, class_id) FROM Foxes;
         """
         )
         rows = self.cursor.fetchall()
         return rows
+    
+    def get_length(self):
+        """Returns the length of SQL database
+        
+        Returns:
+            int: length of SQL database
+        """
+        self.cursor.execute(
+        """--sql
+        SELECT COUNT(1)
+        """
+        )
+        count = self.cursor.fetchall()
+        return count
+    
+    def format_fox_train(self):
+        """Converts output of read_fox_train() to tensors, so that it 
+        can be used in CNN.
+        
+        Returns:
+            tuple(torch.Tensor, torch.Tensor): inputs, labels in that order
+        """
+        rows = self.read_fox_train()
+        inputs, labels = rows
+        
+        #  dtype has to be float32 otherwise Conv2d will complain
+        inputs = np.array(inputs, dtype=np.float32)
+        #  labels needs to be tensor otherwise DataLoader will get upset
+        labels = torch.tensor(labels)
 
 
 if __name__ == '__main__':
     db = FoxDB()
     
+    db.drop_table()
     db.create_fox_train()
     db.insert_fox_train()
     
