@@ -95,7 +95,10 @@ class FoxDB:
         )
         
     def _adapt_array(self, arr):
-        """Use binary data-bytes to push non-text data into sqlite
+        """Saves the array to a binary file in NumPy .npy format, 
+        and then reads the bytes, and then stores them as a 
+        sqlite3 binary data type so that it can be written into the 
+        SQL database.
 
         Args:
             arr (numpy.ndarray): numpy array of data
@@ -103,13 +106,15 @@ class FoxDB:
         Returns:
             sqlite.Binary: binary data
         """
+        
         out = io.BytesIO()
         np.save(out, arr)
         out.seek(0)
         return sqlite3.Binary(out.read())
     
     def _convert_array(self, text):
-        """Converts binary data back to numpy array
+        """Reads the bytes stored in the SQL database, and then converts 
+        them back into a numpy array.
         
         Args:
             text (str): the text
@@ -117,6 +122,7 @@ class FoxDB:
         Returns:
             numpy.ndarray: array of converted data
         """
+        
         out = io.BytesIO(text)
         out.seek(0)
         return np.load(out)
@@ -133,6 +139,7 @@ class FoxDB:
         Similarly for rgb_mat, which is the RGB matrix of the image,
         this is a numpy.ndarray object of dtype float32, and thus will also be 
         stored as a blob in the DB browser. """
+        
         self.cursor.execute(
         """--sql
         CREATE TABLE IF NOT EXISTS Foxes (
