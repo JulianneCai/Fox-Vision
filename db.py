@@ -8,15 +8,14 @@ import os
 
 from collections import defaultdict
 
-from utils.processImage import ImageProcessor, Rescale, RandomCrop, ToTensor
-from utils.const import DATA_DIR, IMG_SIZE, BATCH_SIZE
+from utils.transforms import Rescale, ToTensor
 
 from sklearn.preprocessing import LabelEncoder 
 
 from PIL import Image
 
-import torchvision.transforms as transforms
 from torch.utils.data import Dataset
+import torchvision.transforms as transforms
 
 
 class FoxDatabaseFormatting(Dataset):
@@ -26,17 +25,23 @@ class FoxDatabaseFormatting(Dataset):
     The main attributes here are class_id, which is the label-encoded 
     representation of the class name, class_name, which is the actual 
     class name, and rgb_mat, which is the transformed version of the 
-    RGB matrix."""
-    def __init__(self):
+    RGB matrix.
+    
+    Args: 
+        root_dir (str): directory containing the training images
+        transform (torchvision.transform.)
+    """
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = root_dir
+        self.transform = transform
         
-        self.classes = os.listdir(DATA_DIR)
+        self.classes = os.listdir(root_dir)
         
         encoder = LabelEncoder()
         encoder.fit(self.classes)
         
         #  label-encoded features
         feature_encodings = encoder.transform(self.classes)
-        
         #  name of the feature
         feature_names = encoder.inverse_transform(feature_encodings)
         
@@ -45,20 +50,12 @@ class FoxDatabaseFormatting(Dataset):
         for i in range(len(self.classes)):
             class_name = str(feature_names[i])
             class_map[class_name] = int(feature_encodings[i])
-            
+        
         self.class_map = class_map
         
         self.data = []
-        
-        self.transform = transforms.Compose(
-            [
-                Rescale((IMG_SIZE, IMG_SIZE)),
-                # RandomCrop(IMG_SIZE),
-                ToTensor()
-            ]
-        )
     
-        file_list = glob.glob(DATA_DIR + '/*')
+        file_list = glob.glob(self.root_dir + '/*')
         for class_path in file_list:
             if sys.platform == 'win32':
                 class_name = class_path.split('\\')[-1]
@@ -68,27 +65,48 @@ class FoxDatabaseFormatting(Dataset):
             for img_path in glob.glob(class_path + '/*.jpg'):
                 self.data.append([img_path, class_name])
         
+    def get_class_map(self):
+        """Returns a dictionary of the class names, and the 
+        encoded labels
+
+        Returns:
+            dict<str: int>: dict with key value given by class name, 
+            and value given by encoded value 
+        """
+        return self.class_map
+        
     def __len__(self):
         return len(self.data)
         
-    def __getitem__(self, key):
-        if torch.is_tensor(key):
-            key = key.tolist()
-        img_path, class_name = self.data[key]
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        img_path, class_name = self.data[idx]
         
         #  dtype must be float32 otherwise Conv2d will complain
-        rgb_mat = np.array(Image.open(img_path).convert('RGB'), dtype=np.float32)
+        image = np.array(Image.open(img_path).convert('RGB'), dtype=np.float32)
         
-        class_id = self.class_map[class_name] 
+        class_id = self.class_map[class_name]
         
-        rgb_mat = self.transform(rgb_mat)
+        if self.transform:
+            image = self.transform(image)
             
-        return class_id, class_name, rgb_mat
+        return image, class_id
 
 
 class FoxDB:
-    """ Handles manipulation of fox database """
-    def __init__(self):
+    """ Handles manipulation of fox database. Has methods 
+    for constructing a table in the database if one does not exist.
+    The entries are given by a class_id, and the RGB matrix of the image.
+    Both are turned into blobs and then inserted into the SQL database,
+    since sqlite3 does not support arrays.
+    
+    There are also methods for getting the length of the database,
+    inserting elements, and also retrieving elements."""
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = root_dir
+        self.transform = transform
+        
         self.conn = sqlite3.connect(
             'foxes.db', 
             detect_types=sqlite3.PARSE_DECLTYPES,
@@ -96,11 +114,9 @@ class FoxDB:
             )
         self.cursor = self.conn.cursor()
         
-        self.dataset = FoxDatabaseFormatting()
-       
-        self.img_process = ImageProcessor(
-            batch_size=BATCH_SIZE,
-            img_size=IMG_SIZE
+        self.dataset = FoxDatabaseFormatting(
+            root_dir=self.root_dir,
+            transform=self.transform
         )
         
     def _adapt_array(self, arr):
@@ -136,9 +152,9 @@ class FoxDB:
         return np.load(out)
     
     def create_fox_train(self):
-        """ Creates table if one does not already exist. The table 
-        has the form class_name-i as the primary key, where i is an integer
-        number, and class_name is the name of the class (e.g. 'red-fox-423'). 
+        """ Creates table if one does not already exist. The table contains
+        the label-encoded name of the feature (class_id), and the RGB matrix 
+        (rgb_mat)
         
         The class_id is the one-hot encoding of the class names. It will not 
         be viewable from DB browser since it is an array and has to be stored 
@@ -152,9 +168,8 @@ class FoxDB:
         """--sql
         CREATE TABLE IF NOT EXISTS Foxes (
             img_id TEXT PRIMARY KEY,
-            class_id ARRAY,
-            class_name TEXT,
-            rgb_mat ARRAY
+            rgb_mat ARRAY,
+            class_id ARRAY
             );
         """
         )
@@ -180,31 +195,43 @@ class FoxDB:
         #  will be used for img_id later
         class_counts = defaultdict(int)
         
-        for sample in enumerate(self.dataset):
-            class_id = sample[1][0]
+        class_map = self.dataset.get_class_map()
+        
+        inv_class_map = {value : key for key, value in class_map.items()}
+        
+        for _, (input, label) in enumerate(self.dataset, 0):
+            #  convert torch.Tensor object to numpy.ndarray object 
+            #  so that it can be inserted and selected from SQL database using 
+            #  our adapters and converters
+            input = input.detach().numpy()
+            label = label.detach().numpy()
             
-            #  string representation of class
-            class_name = sample[1][1]
-            
-            #  increment class counter for img_id
-            class_counts[class_name] += 1
-            
-            #  need to do this since sqlite3 doesn't support torch.Tensor objects
-            rgb_mat = sample[1][2].detach().numpy()
+            class_counts[int(label)] += 1
             
             #  the img_id primary key is given by the class_name plus the instance number
-            img_id = class_name + '-' + str(class_counts[class_name])
+            img_id = inv_class_map[int(label)] + '-' + str(class_counts[int(label)])
             
             print(f'Inserting {img_id}')
             
             self.cursor.execute(
                 """--sql
-                INSERT INTO Foxes (img_id, class_id, class_name, rgb_mat) 
-                VALUES (?, ?, ?, ?);
-                """, (img_id, class_id, class_name, rgb_mat)
+                INSERT INTO Foxes (img_id, rgb_mat, class_id) 
+                VALUES (?, ?, ?);
+                """, (img_id, input, label)
                 )
     
-    def retrieve_entry(self, idx):
+    def retrieve_matrix(self, idx):
+        """Retrieves the RGB matrix from the database
+        
+        Args:
+            idx (int): the row index
+            
+        Returns:
+            numpy.ndarray: the RGB matrix. Should be of size (3, IMG_SIZE, IMG_SIZE).
+            Note that the dimensions are permuted, and colour is the first dimension
+            since that is what is needed for PyTorch
+        """
+        sqlite3.register_converter('ARRAY', self._convert_array)
         self.cursor.execute(
         """--sql
         SELECT rgb_mat FROM Foxes LIMIT 1 OFFSET (?)
@@ -212,24 +239,24 @@ class FoxDB:
         )
         row = self.cursor.fetchall()
         
-        return row
+        return row[0][0]
+    
+    def retrieve_class_id(self, idx):
+        """Retrieves the label-encoded value of the class from the database
+        
+        Args:
+            idx (int): the row index
             
-    def read_fox_train(self):
-        """ Reads fox training data from SQL database, and then converts it back into a numpy array
-        
         Returns:
-            numpy.ndarray: fox dataset
+            int: the label-encoded class
         """
-        #  registers array as a type using our custom function
-        sqlite3.register_converter('ARRAY', self._convert_array)
-        
         self.cursor.execute(
-        """--sql
-        SELECT rgb_mat FROM Foxes;
-        """
+            """--sql
+            SELECT class_id FROM Foxes LIMIT 1 OFFSET (?)
+            """, (idx, )
         )
         rows = self.cursor.fetchall()
-        return np.array(rows).astype(np.float32)
+        return rows[0][0]
     
     def get_length(self):
         """Returns the length of SQL database
@@ -243,40 +270,44 @@ class FoxDB:
         """
         )
         count = self.cursor.fetchall()
-        return count
+        #  it gets stored as [(n, )] for some reason
+        return count[0][0]
     
-    def format_fox_train(self):
-        """Converts output of read_fox_train() to tensors, so that it 
-        can be used in CNN.
+    def to_tensor(self, input, label):
+        input = np.array(input, dtype=np.float32)
+        input = torch.from_numpy(input)
         
-        Returns:
-            tuple(torch.Tensor, torch.Tensor): inputs, labels in that order
-        """
-        rows = self.read_fox_train()
-        inputs, labels = rows
+        label = torch.tensor(label)
         
-        #  dtype has to be float32 otherwise Conv2d will complain
-        inputs = np.array(inputs, dtype=np.float32)
-        #  labels needs to be tensor otherwise DataLoader will get upset
-        labels = torch.tensor(labels)
-        
-        return inputs, labels
+        return input, label
 
 
 if __name__ == '__main__':
-    db = FoxDB()
+    from utils.const import DATA_DIR, IMG_SIZE
+    from utils.processImage import FoxDataset
+    from torch.utils.data import DataLoader
     
-    # db.drop_table()
-    # db.create_fox_train()
-    # db.insert_fox_train()
+    transform = transforms.Compose(
+        [
+            Rescale((IMG_SIZE, IMG_SIZE)),
+            ToTensor()
+        ]
+            )
     
-    #  to test if the values were inserted properly
-    values = db.read_fox_train()
+    dataset = FoxDataset(
+        root_dir=DATA_DIR,
+        transform=transform
+    )
     
-    entry = db.retrieve_entry(0)
+    dl = DataLoader(
+        dataset,
+        shuffle=True,
+        batch_size=4
+    )
     
-    print(entry[0])
-    
-    print(values[0])
-    print(values.shape)
-    
+    for i, image in enumerate(dl, 0):
+        print(image[0].size(), image[1].size())
+        
+        if i == 3:
+            break
+           
