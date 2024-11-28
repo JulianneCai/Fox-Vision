@@ -7,11 +7,14 @@ import numpy as np
 import skimage
 
 from PIL import Image
+from collections import defaultdict
+
+from sklearn.preprocessing import OneHotEncoder
+
+from utils.const import DATA_DIR, IMG_SIZE
 
 from torch.utils.data import Dataset, DataLoader, random_split
 import torchvision.transforms as transforms
-
-DATA_DIR = 'fox-data/train'
 
 
 class Rescale(object):
@@ -110,17 +113,33 @@ class FoxDataset(Dataset):
 
         Args:
             root_dir (str): root directory 
-            transform (torchvision.transforms, optional): Optional transformations to be applied. 
+            transform (torchvision.transforms, optional): transformations to be applied. 
             Defaults to None.
         """
         self.root_dir = root_dir
         self.transform = transform
         
-        self.class_map = {'red-fox': 1, 'arctic-fox': 0}
+        self.classes = os.listdir(root_dir)
+        
+        one_hot = OneHotEncoder()
+        
+        one_hot.fit(np.array(self.classes).reshape(-1, 1))
+        
+        feature_encodings = one_hot.transform(np.array(self.classes).reshape(-1, 1))
+        feature_names = one_hot.get_feature_names_out()
+        
+        class_map = defaultdict(list)
+        
+        for i in range(len(self.classes)):
+            class_name = feature_names[i].split('_')[1]
+            class_map[class_name] = feature_encodings[i]
+            
+        self.class_map = class_map
+        self.class_map = {'fox-girl': [0, 0, 0], 'red-fox': [0, 0, 1], 'arctic-fox': [0, 1, 0]}
         
         self.data = []
     
-        file_list = glob.glob(DATA_DIR + '/*')
+        file_list = glob.glob(self.root_dir + '/*')
         for class_path in file_list:
             if sys.platform == 'win32':
                 class_name = class_path.split('\\')[-1]
@@ -237,4 +256,23 @@ class ImageProcessor:
         )
         
         return train_loader, test_loader
+
+if __name__ == '__main__':
+    transform = transforms.Compose(
+        [
+            Rescale(IMG_SIZE),
+            RandomCrop(IMG_SIZE), 
+            ToTensor()
+        ]
+            )
+    dataset = FoxDataset(
+        root_dir=DATA_DIR,
+        transform=transform
+    )
+    
+    for i, image in enumerate(dataset, 0):
+        print(image[0].size(), image[1].size())
         
+        if i == 3:
+            break
+       
