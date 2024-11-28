@@ -9,9 +9,13 @@ import skimage
 from PIL import Image
 from collections import defaultdict
 
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import LabelEncoder
 
-from utils.const import DATA_DIR, IMG_SIZE
+try:
+    from utils.const import DATA_DIR, IMG_SIZE
+except ModuleNotFoundError:
+    sys.path.append(sys.path[0] + '/..')
+    from utils.const import DATA_DIR, IMG_SIZE
 
 from torch.utils.data import Dataset, DataLoader, random_split
 import torchvision.transforms as transforms
@@ -121,19 +125,20 @@ class FoxDataset(Dataset):
         
         self.classes = os.listdir(root_dir)
         
-        one_hot = OneHotEncoder()
+        encoder = LabelEncoder()
+        encoder.fit(self.classes)
         
-        one_hot.fit(np.array(self.classes).reshape(-1, 1))
-        
-        feature_encodings = one_hot.transform(np.array(self.classes).reshape(-1, 1))
-        feature_names = one_hot.get_feature_names_out()
+        #  label-encoded features
+        feature_encodings = encoder.transform(self.classes)
+        #  name of the feature
+        feature_names = encoder.inverse_transform(feature_encodings)
         
         class_map = defaultdict(list)
         
         for i in range(len(self.classes)):
-            class_name = feature_names[i].split('_')[1]
-            class_map[class_name] = feature_encodings[i]
-            
+            class_name = str(feature_names[i])
+            class_map[class_name] = int(feature_encodings[i])
+        
         self.class_map = class_map
         
         self.data = []
@@ -151,10 +156,10 @@ class FoxDataset(Dataset):
     def __len__(self):
         return len(self.data)
         
-    def __getitem__(self, key):
-        if torch.is_tensor(key):
-            key = key.tolist()
-        img_path, class_name = self.data[key]
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        img_path, class_name = self.data[idx]
         
         #  dtype must be float32 otherwise Conv2d will complain
         image = np.array(Image.open(img_path).convert('RGB'), dtype=np.float32)
@@ -258,22 +263,22 @@ class ImageProcessor:
     
 #  for testing
 
-# if __name__ == '__main__':
-#     transform = transforms.Compose(
-#         [
-#             Rescale(IMG_SIZE),
-#             RandomCrop(IMG_SIZE), 
-#             ToTensor()
-#         ]
-#             )
-#     dataset = FoxDataset(
-#         root_dir=DATA_DIR,
-#         transform=transform
-#     )
+if __name__ == '__main__':
+    transform = transforms.Compose(
+        [
+            Rescale(IMG_SIZE),
+            RandomCrop(IMG_SIZE), 
+            ToTensor()
+        ]
+            )
+    dataset = FoxDataset(
+        root_dir=DATA_DIR,
+        transform=transform
+    )
     
-#     for i, image in enumerate(dataset, 0):
-#         print(image[0].size(), image[1].size())
+    for i, image in enumerate(dataset, 0):
+        print(image[0].size(), image[1].size())
         
-#         if i == 3:
-#             break
+        if i == 3:
+            break
        
