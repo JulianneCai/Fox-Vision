@@ -11,7 +11,7 @@ from collections import defaultdict
 from utils.processImage import ImageProcessor, Rescale, RandomCrop, ToTensor
 from utils.const import DATA_DIR, IMG_SIZE, BATCH_SIZE
 
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import LabelEncoder 
 
 from PIL import Image
 
@@ -20,22 +20,31 @@ from torch.utils.data import Dataset
 
 
 class FoxDatabaseFormatting(Dataset):
-    """ Collates information fox images stored locally for database insertion """
+    """ Iterator wrapper for fox image information so that it can be 
+    used for database insertion. 
+    
+    The main attributes here are class_id, which is the label-encoded 
+    representation of the class name, class_name, which is the actual 
+    class name, and rgb_mat, which is the transformed version of the 
+    RGB matrix."""
     def __init__(self):
         
         self.classes = os.listdir(DATA_DIR)
         
-        one_hot = OneHotEncoder(sparse_output=True)
-        one_hot.fit(np.array(self.classes).reshape(-1, 1))
+        encoder = LabelEncoder()
+        encoder.fit(self.classes)
         
-        feature_encodings = one_hot.transform(np.array(self.classes).reshape(-1, 1)).toarray()
-        feature_names = one_hot.get_feature_names_out()
+        #  label-encoded features
+        feature_encodings = encoder.transform(self.classes)
+        
+        #  name of the feature
+        feature_names = encoder.inverse_transform(feature_encodings)
         
         class_map = defaultdict(list)
         
         for i in range(len(self.classes)):
-            class_name = feature_names[i].split('_')[1]
-            class_map[class_name] = feature_encodings[i]
+            class_name = str(feature_names[i])
+            class_map[class_name] = int(feature_encodings[i])
             
         self.class_map = class_map
         
@@ -122,7 +131,6 @@ class FoxDB:
         Returns:
             numpy.ndarray: array of converted data
         """
-        
         out = io.BytesIO(text)
         out.seek(0)
         return np.load(out)
@@ -195,6 +203,16 @@ class FoxDB:
                 VALUES (?, ?, ?, ?);
                 """, (img_id, class_id, class_name, rgb_mat)
                 )
+    
+    def retrieve_entry(self, idx):
+        self.cursor.execute(
+        """--sql
+        SELECT rgb_mat FROM Foxes LIMIT 1 OFFSET (?)
+        """, (idx, )
+        )
+        row = self.cursor.fetchall()
+        
+        return row
             
     def read_fox_train(self):
         """ Reads fox training data from SQL database, and then converts it back into a numpy array
@@ -203,15 +221,15 @@ class FoxDB:
             numpy.ndarray: fox dataset
         """
         #  registers array as a type using our custom function
-        sqlite3.register_converter('array', self._convert_array)
+        sqlite3.register_converter('ARRAY', self._convert_array)
         
         self.cursor.execute(
         """--sql
-        SELECT rgb_mat, class_id FROM Foxes;
+        SELECT rgb_mat FROM Foxes;
         """
         )
         rows = self.cursor.fetchall()
-        return rows
+        return np.array(rows).astype(np.float32)
     
     def get_length(self):
         """Returns the length of SQL database
@@ -246,16 +264,19 @@ class FoxDB:
 
 
 if __name__ == '__main__':
-    format = FoxDatabaseFormatting()
-    
     db = FoxDB()
     
-    db.drop_table()
-    db.create_fox_train()
-    db.insert_fox_train()
+    # db.drop_table()
+    # db.create_fox_train()
+    # db.insert_fox_train()
     
     #  to test if the values were inserted properly
     values = db.read_fox_train()
     
-    print(np.array(values).shape)
+    entry = db.retrieve_entry(0)
+    
+    print(entry[0])
+    
+    print(values[0])
+    print(values.shape)
     
