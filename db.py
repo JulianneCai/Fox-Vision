@@ -25,13 +25,19 @@ class FoxDatabaseFormatting(Dataset):
         
         self.classes = os.listdir(DATA_DIR)
         
-        # one_hot = OneHotEncoder()
+        one_hot = OneHotEncoder(sparse_output=True)
+        one_hot.fit(np.array(self.classes).reshape(-1, 1))
         
-        # one_hot.fit_transform(self.classes)
+        feature_encodings = one_hot.transform(np.array(self.classes).reshape(-1, 1)).toarray()
+        feature_names = one_hot.get_feature_names_out()
         
-        # self.class_map = one_hot
+        class_map = defaultdict(list)
         
-        self.class_map = {'fox-girl': [0, 0, 0], 'red-fox': [0, 0, 1], 'arctic-fox': [0, 1, 0]}
+        for i in range(len(self.classes)):
+            class_name = feature_names[i].split('_')[1]
+            class_map[class_name] = feature_encodings[i]
+            
+        self.class_map = class_map
         
         self.data = []
         
@@ -116,12 +122,22 @@ class FoxDB:
         return np.load(out)
     
     def create_fox_train(self):
-        """Creates table if one does not already exist"""
+        """ Creates table if one does not already exist. The table 
+        has the form class_name-i as the primary key, where i is an integer
+        number, and class_name is the name of the class (e.g. 'red-fox-423'). 
+        
+        The class_id is the one-hot encoding of the class names. It will not 
+        be viewable from DB browser since it is an array and has to be stored 
+        as a blob. 
+        
+        Similarly for rgb_mat, which is the RGB matrix of the image,
+        this is a numpy.ndarray object of dtype float32, and thus will also be 
+        stored as a blob in the DB browser. """
         self.cursor.execute(
         """--sql
         CREATE TABLE IF NOT EXISTS Foxes (
             img_id TEXT PRIMARY KEY,
-            class_id INTEGER,
+            class_id ARRAY,
             class_name TEXT,
             rgb_mat ARRAY
             );
@@ -137,7 +153,10 @@ class FoxDB:
         )
         
     def insert_fox_train(self):
-        """ Inserts binary fox images into SQL database """
+        """ Inserts entire fox training dataset into SQL database 
+        by converting the RGB matrices into binary data, and then 
+        using our custom function to push non-text data into the 
+        database """
         
         #  registers np.ndarray as a type that can be inserted into the database
         sqlite3.register_adapter(np.ndarray, self._adapt_array)
@@ -147,7 +166,6 @@ class FoxDB:
         class_counts = defaultdict(int)
         
         for sample in enumerate(self.dataset):
-            #  need to do this since sqlite3 doesn't support storing Tensor objects
             class_id = sample[1][0]
             
             #  string representation of class
@@ -156,9 +174,10 @@ class FoxDB:
             #  increment class counter for img_id
             class_counts[class_name] += 1
             
-            #  same here, RGB matrix is Tensor object
+            #  need to do this since sqlite3 doesn't support torch.Tensor objects
             rgb_mat = sample[1][2].detach().numpy()
             
+            #  the img_id primary key is given by the class_name plus the instance number
             img_id = class_name + '-' + str(class_counts[class_name])
             
             print(f'Inserting {img_id}')
@@ -171,16 +190,17 @@ class FoxDB:
                 )
             
     def read_fox_train(self):
-        """ Reads fox data from SQL database, and then converts it back into a numpy array
+        """ Reads fox training data from SQL database, and then converts it back into a numpy array
         
         Returns:
             numpy.ndarray: fox dataset
         """
+        #  registers array as a type using our custom function
         sqlite3.register_converter('array', self._convert_array)
         
         self.cursor.execute(
         """--sql
-        SELECT (rgb_mat, class_id) FROM Foxes;
+        SELECT rgb_mat, class_id FROM Foxes;
         """
         )
         rows = self.cursor.fetchall()
@@ -194,7 +214,7 @@ class FoxDB:
         """
         self.cursor.execute(
         """--sql
-        SELECT COUNT(1)
+        SELECT COUNT(1) FROM Foxes
         """
         )
         count = self.cursor.fetchall()
@@ -214,9 +234,13 @@ class FoxDB:
         inputs = np.array(inputs, dtype=np.float32)
         #  labels needs to be tensor otherwise DataLoader will get upset
         labels = torch.tensor(labels)
+        
+        return inputs, labels
 
 
 if __name__ == '__main__':
+    format = FoxDatabaseFormatting()
+    
     db = FoxDB()
     
     db.drop_table()
