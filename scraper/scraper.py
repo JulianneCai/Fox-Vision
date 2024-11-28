@@ -40,33 +40,96 @@ class SafebooruPost:
         self.width = width
     
     def get_rating(self):
+        """Gets the rating of a post
+
+        Returns:
+            str: rating. One of 'general' or 'explicit'. But should always be 'general'. 
+        """
         return self.rating
     
     def get_preview(self):
+        """Gets the url of the preview image
+
+        Returns:
+            str: url of preview image 
+        """
         return self.preview_url
     
     def get_sample(self):
+        """Gets sample url of image
+
+        Returns:
+            str: sample url of image 
+        """
         return self.sample_url
     
     def get_file(self):
+        """Gets full sized image of post
+
+        Returns:
+            str: full sized image of post 
+        """
         return self.file_url
     
     def get_height(self):
+        """Height of image
+
+        Returns:
+            int: height of the image 
+        """
         return self.height
     
     def get_width(self):
+        """Gets width of image
+
+        Returns:
+            int: width of image
+        """
         return self.width
     
     def get_pid(self):
+        """Gets the page ID of the url to the JSON database. 
+        Each unique page on Safebooru has a PID assigned to it,
+        that increments each time the user goes to the next page.
+        
+        Note that the PID works differently for the JSON database,
+        and the actual page itself. On the actual website, each page
+        contains 42 images, and the PID is given by the index of the 
+        first image on each page. So, on page one the PID will be 0,
+        and on page two the PID will be 42. 
+        
+        However, the JSON database stores information on the first 100 
+        posts in the database. Then, the next page can be accessed by changing
+        the PID to be 2. So, on the JSON database, the PID database increments
+        by 1 for each new page.
+
+        Returns:
+            pid: page ID 
+        """
         return self.pid
     
     def set_pid(self, pid):
+        """Changes the pid
+
+        Args:
+            pid (int): new page ID 
+        """
         self.pid = pid
     
     def get_tag(self):
+        """Tag associated to the image (e.g. fox_girl, blonde, etc.)
+
+        Returns:
+            str: tag associated to image 
+        """
         return self.tag
     
     def set_tag(self, tag):
+        """Changes the tag
+
+        Args:
+            tag (str): the new tag 
+        """
         self.tag = tag
         
     def get_json_url(self):
@@ -85,12 +148,17 @@ class SafebooruPost:
             url (str): the url 
 
         Returns:
-            bool: True if image contains url, False otherwise 
+            bool: True if image contains image, False otherwise 
         """
         mimetype, encoding = mimetypes.guess_type(url)
         return (mimetype and mimetype.startswith('image'))
     
     def _is_gif(self, url):
+        """Checks whether the url contains a gif
+        
+        Returns:
+            bool: True if image contains gif, False otherwise
+        """
         content_type = requests.head(url).headers['Content-Type']
         if content_type == 'image/gif':
             return True
@@ -148,27 +216,48 @@ class SafebooruScraper:
             
         return posts
     
-    def save_to_training(self, root_dir, tag):
+    def save_to_training(self, root_dir, tag, compressed=False):
         """Saves training images to root_dir
 
         Args:
             root_dir (str): the directory that the files need to be saved to
             tag (str): the tag (e.g. fox_girl) 
+            compressed (bool, optional): whether or not to download the preview image (compressed),
+            or to download the sample image (slightly compressed). There's the option
+            to download the full-sized image as well, but that's not recommended. Defaults to 
+            compressed
         """
         pid, i = 0, 0
         
+        #  initialise first batch of posts
+        posts = self._get_posts(pid, tag)
+        
         while i < self.train_size:
+            #  each page in the JSON database contains 100 datapoints
+            #  PID needs to be increased after 100 points are read, which
+            #  will take us to the next page of the database
             if i % 100 == 0 and i != 0:
-                pid += 42
+                pid += 1 
+                
                 try:
                     posts = self._get_posts(pid, tag)
-                #  this means that there are no more files
+                #  this means that there are no more files to read
                 except requests.exceptions.JSONDecodeError:
                     break
+                
             dir = os.path.join(root_dir)
+            
             for post in posts:
-                url = post.get_sample()
+                #  get sample url, which is a slightly compressed version of the 
+                #  full-sized image
+                if compressed is False:
+                    #  get sample url
+                    url = post.get_sample()
+                else:
+                    #  get preview url
+                    url = post.get_preview()
                 response = requests.get(url, stream=True)
+                
                 if response.status_code == 200: 
                     print(i, 'Response granted. Writing...')
                     with open(os.path.join(dir, 'fox-girl-' + str(i) + '.jpg'), 'wb') as file:
