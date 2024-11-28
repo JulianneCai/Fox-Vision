@@ -135,7 +135,6 @@ class FoxDataset(Dataset):
             class_map[class_name] = feature_encodings[i]
             
         self.class_map = class_map
-        self.class_map = {'fox-girl': [0, 0, 0], 'red-fox': [0, 0, 1], 'arctic-fox': [0, 1, 0]}
         
         self.data = []
     
@@ -256,23 +255,25 @@ class ImageProcessor:
         )
         
         return train_loader, test_loader
-
-if __name__ == '__main__':
-    transform = transforms.Compose(
-        [
-            Rescale(IMG_SIZE),
-            RandomCrop(IMG_SIZE), 
-            ToTensor()
-        ]
-            )
-    dataset = FoxDataset(
-        root_dir=DATA_DIR,
-        transform=transform
-    )
     
-    for i, image in enumerate(dataset, 0):
-        print(image[0].size(), image[1].size())
+#  for testing
+
+# if __name__ == '__main__':
+#     transform = transforms.Compose(
+#         [
+#             Rescale(IMG_SIZE),
+#             RandomCrop(IMG_SIZE), 
+#             ToTensor()
+#         ]
+#             )
+#     dataset = FoxDataset(
+#         root_dir=DATA_DIR,
+#         transform=transform
+#     )
+    
+#     for i, image in enumerate(dataset, 0):
+#         print(image[0].size(), image[1].size())
         
-        if i == 3:
-            break
+#         if i == 3:
+#             break
        
