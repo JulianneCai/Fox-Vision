@@ -5,21 +5,26 @@ import torch
 from tqdm import tqdm
 
 import torch.nn as nn
-
 from torch.optim import Adam
 import torchvision.transforms as transforms
 
-from learningRate import LearningRateFinder
+try:
+    from learningRate import LearningRateFinder
+except ModuleNotFoundError:
+    from models.learningRate import LearningRateFinder
 
 try:
-    from utils.processImage import ImageProcessor, FoxDataset, Rescale, RandomCrop, ToTensor
+    from utils.processImage import ImageProcessor, FoxDataset
+    from utils.transforms import Rescale, RandomCrop, ToTensor
     from utils.const import DATA_DIR, BATCH_SIZE, IMG_SIZE
 except ModuleNotFoundError:
     import sys
     sys.path.append(sys.path[0] + '/..')
-    from utils.processImage import ImageProcessor, FoxDataset, Rescale, RandomCrop, ToTensor
+    from utils.processImage import ImageProcessor, FoxDataset
+    from utils.transforms import Rescale, RandomCrop, ToTensor
     from utils.const import DATA_DIR, BATCH_SIZE, IMG_SIZE
-
+    
+    
 
 class FoxCNN(nn.Module):
     def __init__(self, output_dim):
@@ -90,8 +95,10 @@ class Trainer:
         )
        
         self.img_process = ImageProcessor(
+            root_dir=DATA_DIR,
             batch_size=BATCH_SIZE,
-            img_size=IMG_SIZE
+            img_size=IMG_SIZE,
+            transform=self.transform
         )
         
         self.train_dl, self.test_dl = self.img_process.train_test_split_dl(
@@ -99,7 +106,7 @@ class Trainer:
             train_size=0.9,
             test_size=0.1,
             shuffle=True,
-            num_workers=3
+            num_workers=0 #  non-zero num_workers results in pickling error with SQLite
         )
         #  convolutional neural network
         #  self.img_process.classes gives a list of the classes (arctic-fox, red-fox)
@@ -306,7 +313,8 @@ class Trainer:
         epoch_accuracy = 0.0
         
         #  search for optimal learning rate (LR) using linear LR finder
-        optimiser = self.get_optimiser(step_flag='exp')
+        # optimiser = self.get_optimiser(step_flag='exp')
+        optimiser = Adam(self.model.parameters(), lr=0.0001, weight_decay=0.005)
         
         #  define execution device
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
