@@ -1,119 +1,29 @@
 import os
-import torch
-import glob
 import sys
-import numpy as np
 
-import skimage
-
-from PIL import Image
-from collections import defaultdict
-
-from sklearn.preprocessing import LabelEncoder
+import db
 
 try:
     from utils.const import DATA_DIR, IMG_SIZE
+    from utils.transforms import Rescale, ToTensor
 except ModuleNotFoundError:
     sys.path.append(sys.path[0] + '/..')
     from utils.const import DATA_DIR, IMG_SIZE
-
+    from utils.transforms import Rescale, ToTensor
+    
 from torch.utils.data import Dataset, DataLoader, random_split
 import torchvision.transforms as transforms
 
 
-class Rescale(object):
-    """Rescales the iamge to a given size
-
-    Args:
-        size (tuple or int): desired output dimension. If tuple, output is 
-        matched to size. If int, smaller of image edges is matched to size
-        while maintaining aspect ratio
-
-    Returns:
-        np.ndarray: RGB matrix of the image
-    """
-    def __init__(self, size):
-        self.size = size
-        
-    def __call__(self, image):
-        height, width = image.shape[:2]
-        
-        if isinstance(self.size, int):
-            if height > width:
-                new_height, new_width = int(self.size * height / width), self.size
-            else:
-                new_height, new_width = self.size, int(self.size * width / height)
-        elif isinstance(self.size, tuple):
-            if len(self.size) == 2:
-                new_height, new_width = self.size
-            else:
-                raise ValueError(f'expected tuple of length 2, but got tuple of length {len(self.size)}.')
-        else:
-            raise ValueError(f'size must be type int or tuple, but got {type(self.size)}.')
-        
-        image = skimage.transform.resize(image, (new_height, new_width))
-        
-        return image
-
-
-class RandomCrop(object):
-    """Randomly crops the sample image for numpy.ndarray RGB matrices.
-    The PyTorch version of this function only does it for PIL images
-
-    Args:
-        size (tuple or int): desired output size. If int, square crop is performed.
-    """
-    def __init__(self, size):
-        if isinstance(size, int):
-            self.size = (size, size)
-        elif isinstance(size, tuple):
-            if len(size) == 2:
-                self.size = size
-            else:
-                raise ValueError(f'expected tuple of length 2, but got tuple of length {len(size)}')
-        else:
-            raise ValueError(f'size must be type int or tuple, but got {type(size)}')
-        
-    def __call__(self, image):
-        """Randomly crops the image
-
-        Args:
-            image (numpy.ndarray): the RGB matrix of the image
-
-        Returns:
-            numpy.ndarray: the randomly cropped RGB matrix of the image 
-        """
-        height, width = image.shape[:2]
-        
-        new_height, new_width = self.size
-        
-        top = np.random.randint(0, height - new_height + 1)
-        left = np.random.randint(0, width - new_width + 1)
-        
-        image = image[
-            top: top + new_height,
-            left: left + new_width
-        ]
-        
-        return image
-    
-    
-class ToTensor(object):
-    """Converts ndarrays in sample to tensors
-
-    Args:
-        image (np.ndarray): RGB matrix of the image
-    """
-    def __call__(self, image):
-        #  numpy image uses H x W x C
-        #  PyTorch uses C x H x W
-        image = image.transpose((2, 0, 1))
-        return torch.from_numpy(image)
-        
        
 class FoxDataset(Dataset):
     def __init__(self, root_dir, transform=None):
-        """Fox dataset 
+        """Iterative wrapper that allows PyTorch to iterate through 
+        image, class_id during training.
+        
+        The class retrieves the image and class_id from a SQL database, which 
+        is managed by the FoxDB class (see db.py), which contains methods that 
+        send SQL queries to the database.
 
         Args:
             root_dir (str): root directory 
@@ -123,54 +33,19 @@ class FoxDataset(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         
-        self.classes = os.listdir(root_dir)
-        
-        encoder = LabelEncoder()
-        encoder.fit(self.classes)
-        
-        #  label-encoded features
-        feature_encodings = encoder.transform(self.classes)
-        #  name of the feature
-        feature_names = encoder.inverse_transform(feature_encodings)
-        
-        class_map = defaultdict(list)
-        
-        for i in range(len(self.classes)):
-            class_name = str(feature_names[i])
-            class_map[class_name] = int(feature_encodings[i])
-        
-        self.class_map = class_map
-        
-        self.data = []
-    
-        file_list = glob.glob(self.root_dir + '/*')
-        for class_path in file_list:
-            if sys.platform == 'win32':
-                class_name = class_path.split('\\')[-1]
-            #  unix systems index their files differently
-            else:
-                class_name = class_path.split('/')[-1]
-            for img_path in glob.glob(class_path + '/*.jpg'):
-                self.data.append([img_path, class_name])
+        self.db = db.FoxDB(
+            root_dir=self.root_dir,
+            transform=self.transform
+        )
+       
         
     def __len__(self):
-        return len(self.data)
+        return self.db.get_length()
         
     def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-        img_path, class_name = self.data[idx]
-        
-        #  dtype must be float32 otherwise Conv2d will complain
-        image = np.array(Image.open(img_path).convert('RGB'), dtype=np.float32)
-        
-        class_id = self.class_map[class_name] 
-        
-        #  class_id needs to be tensor otherwise DataLoader gets upset
-        class_id = torch.tensor(class_id)
-        
-        if self.transform:
-            image = self.transform(image)
+        image = self.db.retrieve_matrix(idx)
+        class_id = self.db.retrieve_class_id(idx)
+        image, class_id = self.db.to_tensor(image, class_id)
             
         return image, class_id
 
@@ -187,8 +62,8 @@ class ImageProcessor:
         
         self.transform = transforms.Compose(
             [
-                Rescale(self.img_size),
-                RandomCrop(self.img_size),
+                Rescale((self.img_size, self.img_size)),
+                # RandomCrop(self.img_size),
                 ToTensor()
             ]
         )
@@ -266,14 +141,21 @@ class ImageProcessor:
 if __name__ == '__main__':
     transform = transforms.Compose(
         [
-            Rescale(IMG_SIZE),
-            RandomCrop(IMG_SIZE), 
+            Rescale((IMG_SIZE, IMG_SIZE)),
             ToTensor()
         ]
             )
+    
     dataset = FoxDataset(
         root_dir=DATA_DIR,
         transform=transform
+    )
+    
+    dl = DataLoader(
+        dataset,
+        shuffle=True,
+        num_workers=3,
+        batch_size=4
     )
     
     for i, image in enumerate(dataset, 0):
