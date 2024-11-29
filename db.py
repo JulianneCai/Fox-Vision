@@ -165,28 +165,33 @@ class FoxDB:
         stored as a blob in the DB browser. """
         
         self.cursor.execute(
-        """--sql
-        CREATE TABLE IF NOT EXISTS Foxes (
-            img_id TEXT PRIMARY KEY,
-            rgb_mat ARRAY,
-            class_id ARRAY
-            );
-        """
+            """--sql
+            CREATE TABLE IF NOT EXISTS Foxes (
+                img_id TEXT PRIMARY KEY,
+                rgb_mat ARRAY,
+                class_id ARRAY
+                )
+            """
         )
         
     def drop_table(self):
         """ Deletes the table """
         self.cursor.execute(
-        """--sql
-        DROP TABLE IF EXISTS Foxes;
-        """
+            """--sql
+            DROP TABLE IF EXISTS Foxes;
+            """
         )
         
-    def insert_fox_train(self):
+    def insert_fox_train(self, verbose=False):
         """ Inserts entire fox training dataset into SQL database 
         by converting the RGB matrices into binary data, and then 
         using our custom function to push non-text data into the 
-        database """
+        database 
+        
+        Args:
+            verbose (bool): whether or not to have logging messages
+        
+        """
         
         #  registers np.ndarray as a type that can be inserted into the database
         sqlite3.register_adapter(np.ndarray, self._adapt_array)
@@ -211,17 +216,34 @@ class FoxDB:
             #  the img_id primary key is given by the class_name plus the instance number
             img_id = inv_class_map[int(label)] + '-' + str(class_counts[int(label)])
             
-            print(f'Inserting {img_id}')
+            if verbose is True:
+                print(f'Inserting {img_id}')
             
             self.cursor.execute(
                 """--sql
                 INSERT INTO Foxes (img_id, rgb_mat, class_id) 
                 VALUES (?, ?, ?);
                 """, (img_id, input, label)
-                )
+            )
+    
+    def get_cols(self):
+        """Returns the columns of the SQL database table.
+        
+        Returns:
+            list<str>: column names
+        """
+        self.cursor.execute(
+            """--sql
+            PRAGMA table_info(Foxes);
+            """
+        )
+        col_names = self.cursor.fetchall()
+        return col_names
     
     def retrieve_matrix(self, idx):
-        """Retrieves the RGB matrix from the database
+        """Retrieves the RGB matrix from the database. The selection assumes that 
+        the primary key has the form class_name-n, where class_name is the name of 
+        the class (e.g. arctic-fox, red-fox), and n is a unique integer.
         
         Args:
             idx (int): the row index
@@ -232,11 +254,33 @@ class FoxDB:
             since that is what is needed for PyTorch
         """
         sqlite3.register_converter('ARRAY', self._convert_array)
+        
         self.cursor.execute(
-        """--sql
-        SELECT rgb_mat FROM Foxes LIMIT 1 OFFSET (?)
-        """, (idx, )
+            """--sql
+            SELECT rgb_mat FROM Foxes LIMIT 1 OFFSET (?)
+            """, 
+            (idx, )
         )
+        
+        row = self.cursor.fetchall()
+        
+        return row[0][0]
+    
+    def retrieve_matrix_by_class(self, idx, class_name):
+        if class_name not in self.dataset.classes:
+            raise ValueError(f'class {class_name} needs to be one of {self.dataset.classes}')
+        
+        sqlite3.register_converter('ARRAY', self._convert_array)
+        
+        self.cursor.execute(
+            """--sql
+            SELECT rgb_mat FROM Foxes
+            WHERE img_id LIKE (?)
+            LIMIT 1 OFFSET (?)
+            """, 
+            (f'{class_name}-%', idx)
+        )
+        
         row = self.cursor.fetchall()
         
         return row[0][0]
@@ -250,13 +294,45 @@ class FoxDB:
         Returns:
             int: the label-encoded class
         """
+        sqlite3.register_converter('ARRAY', self._convert_array)
+        
         self.cursor.execute(
             """--sql
             SELECT class_id FROM Foxes LIMIT 1 OFFSET (?)
-            """, (idx, )
+            """, 
+            (idx, )
         )
-        rows = self.cursor.fetchall()
-        return rows[0][0]
+            
+        row = self.cursor.fetchall()
+            
+        return row[0][0]
+    
+    def retrieve_class_id_by_class(self, idx, class_name):
+        """Retrives the idx'th row of class_name
+
+        Args:
+            idx (int): index 
+            class_name (str): the class name. Must be one of the classes.
+
+        Raises:
+            ValueError: when the class name does not match up with an existing class
+        """
+        if class_name not in self.dataset.classes:
+            raise ValueError(f'class {class_name} is not one of {self.dataset.classes}')
+        sqlite3.register_converter('ARRAY', self._convert_array)
+        
+        self.cursor.execute(
+            """--sql
+            SELECT class_id FROM Foxes
+            WHERE img_id LIKE (?)
+            LIMIT 1 OFFSET (?)
+            """, 
+            (f'{class_name}-%', idx, )
+        )
+        
+        row = self.cursor.fetchall()
+        
+        return row[0][0]
     
     def get_length(self):
         """Returns the length of SQL database
@@ -265,10 +341,11 @@ class FoxDB:
             int: length of SQL database
         """
         self.cursor.execute(
-        """--sql
-        SELECT COUNT(1) FROM Foxes
-        """
+            """--sql
+            SELECT COUNT(1) FROM Foxes
+            """
         )
+            
         count = self.cursor.fetchall()
         #  it gets stored as [(n, )] for some reason
         return count[0][0]
@@ -293,6 +370,11 @@ if __name__ == '__main__':
             ToTensor()
         ]
             )
+    
+    db = FoxDB(root_dir=DATA_DIR, transform=transform)
+    
+    value = db.retrieve_matrix_by_class(idx=3, class_name='fox-girl')
+    key = db.retrieve_class_id_by_class(idx=3, class_name='fox-girl')
     
     dataset = FoxDataset(
         root_dir=DATA_DIR,
