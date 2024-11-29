@@ -3,6 +3,8 @@ import numpy as np
 import skimage
 import torch
 
+from PIL import Image
+
 
 class Rescale(object):
     """Rescales the iamge to a given size
@@ -92,3 +94,14 @@ class ToTensor(object):
         #  PyTorch uses C x H x W
         image = image.transpose((2, 0, 1))
         return torch.from_numpy(image)
+    
+
+class RandomHorizontalFlip(object):
+    def __init__(self, p=0.5):
+        self.p = p
+        
+    def __call__(self, image):
+        if torch.rand(1) < self.p:
+            image = image.transpose((1, 0, 2))
+        return image
+            
