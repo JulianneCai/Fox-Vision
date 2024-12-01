@@ -1,27 +1,37 @@
 import torch
+import numpy as np
 
 from torch.optim.lr_scheduler import _LRScheduler
+
+from typing import List, Tuple
+
 
 
 class ExponentialLearningRate(_LRScheduler):
     """ Exponentially increases the learning rate over a number of iterations
     
     Args:
-        optimiser (torch.optim.Optimiser): optimiser
+        optimiser (torch.optim.Optimizer): optimiser
         end_lr (float): largest permissible learning rate 
         num_iter (int): number of iterations
         last_epoch (int): index of the last epoch. Defaults to -1.
     """
-    def __init__(self, optimiser, end_lr, num_iter, last_epoch=-1):
+    def __init__(
+            self, 
+            optimiser, 
+            end_lr, 
+            num_iter, 
+            last_epoch=-1
+        ) -> None:
         self.end_lr = end_lr
         self.num_iter = num_iter
         super(ExponentialLearningRate, self).__init__(optimiser, last_epoch)
         
-    def get_lr(self):
+    def get_lr(self) -> List[float]:
         """ Gets the learning rate
 
         Returns:
-            List<float>: list of all learning rates
+            List[float]: list of all learning rates
         """
         current_iter = self.last_epoch
         r = current_iter / self.num_iter
@@ -38,16 +48,22 @@ class LinearLearningRate(_LRScheduler):
         num_iter (int): number of iterations
         last_epoch (int): index of the last epoch. Defaults to -1.
     """
-    def __init__(self, optimiser, end_lr, num_iter, last_epoch=-1):
+    def __init__(
+            self, 
+            optimiser, 
+            end_lr, 
+            num_iter, 
+            last_epoch=-1
+        ) -> None:
         self.end_lr = end_lr
         self.num_iter = num_iter
         super().__init__(optimiser, last_epoch)
         
-    def get_lr(self):
+    def get_lr(self) -> List[float]:
         """Get the learning rate
         
         Returns:
-            List<float>: list of all learning rates
+            List[float]: list of all learning rates
         """
         r = self.last_epoch / (self.num_iter - 1)
         
@@ -61,11 +77,11 @@ class IteratorWrapper:
     Args:
         iterator: thing that iterates
     """
-    def __init__(self, iterator):
+    def __init__(self, iterator) -> None:
         self.iterator = iterator
         self._iterator = iter(iterator)    
     
-    def __next__(self):
+    def __next__(self) -> Tuple[np.ndarray, np.ndarray]:
         try: 
             inputs, labels = next(self._iterator)
         except StopIteration:
@@ -74,7 +90,7 @@ class IteratorWrapper:
 
         return inputs, labels
     
-    def get_batch(self):
+    def get_batch(self) -> Tuple[np.ndarray, np.ndarray]:
         return next(self)
         
 
@@ -86,7 +102,7 @@ class LearningRateFinder:
         optimiser (torch.optim.Optimizer): optimiser for loss function
         criterion (torch.nn.something): choice of loss function (e.g. CrossEntropyLoss)
     """
-    def __init__(self, model, optimiser, criterion):
+    def __init__(self, model, optimiser, criterion) -> None:
         self.model = model
         self.optimiser = optimiser
         self.criterion = criterion
@@ -98,19 +114,19 @@ class LearningRateFinder:
         """ Choice of neural network model """
         return self.model
     
-    def get_optimiser(self):
+    def get_optimiser(self) -> torch.optim.Optimizer:
         """ Choice of optimiser """
         return self.optimiser
     
-    def get_criterion(self):
+    def get_criterion(self) -> torch.nn.CrossEntropyLoss:
         """ Choice of loss function """
         return self.criterion
     
-    def get_device(self):
+    def get_device(self) -> str:
         """ Returns the device that the CNN is using to run """
         return self.device
        
-    def _train_batch(self, iterator: IteratorWrapper):
+    def _train_batch(self, iterator: IteratorWrapper) -> float:
         """ Trains models on batch of data, and then records down the training loss
 
         Args:
@@ -126,7 +142,7 @@ class LearningRateFinder:
         x = x.to(self.device)
         y = y.to(self.device)
         
-        y_pred, _ = self.model(x) 
+        y_pred = self.model(x) 
        
         loss = self.criterion(y_pred, y)
         
@@ -143,7 +159,7 @@ class LearningRateFinder:
         num_iter=100, 
         smooth_f=0.05, 
         diverge_th=5
-    ):
+    ) -> Tuple[List[float], List[float]]:
         """ Learning rate (LR) range test
         
         The learning rate range test increases the learning rate exponentially, 
@@ -159,12 +175,13 @@ class LearningRateFinder:
             diverge_th (int, optional): stops testing after crossing this threshold. Defaults to 5.
 
         Returns:
-            tuple(List<floats>, List<floats>): tuple of list of learning rates, and a list of training losses
+            Tuple(List[floats], List[floats]]: tuple of list of learning rates, and a list of training losses
         """
         lrs = []
         losses = []
         best_loss = float('inf')
         lr_scheduler = None
+        
         if step_flag == 'exp':
             lr_scheduler = ExponentialLearningRate(self.optimiser, end_lr, num_iter)
         elif step_flag == 'lin':

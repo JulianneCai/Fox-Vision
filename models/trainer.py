@@ -1,6 +1,8 @@
 import time
 import math
 
+from collections import defaultdict
+
 import torch
 from tqdm import tqdm
 
@@ -259,28 +261,28 @@ class Trainer:
         """
         START_LR = 1e-8
         
-        optimiser = Adam(self.model.parameters(), lr=START_LR)
+        optimiser = Adam(self.model.parameters(), lr=START_LR, weight_decay=0.005)
     
         lr_finder = LearningRateFinder(self.model, optimiser, self.loss)
     
-        self.model.to(lr_finder.get_device())
+        self.model.to(self.device)
     
-        self.loss = self.loss.to(lr_finder.get_device())
+        self.loss = self.loss.to(self.device)
         
         #  the end LR is 10, and the number of iterations is 100 by default
         #  see learningRate.py for more details
-        lrs, losses = lr_finder.range_test(trainer.train_dl, 
+        lrs, losses = lr_finder.range_test(self.train_dl, 
                                            step_flag=step_flag,
                                            num_iter=100)
 
-        lr_dict = {}
+        lr_dict = defaultdict(float)
     
         for i in range(len(lrs)):
             lr_dict[lrs[i]] = losses[i]
     
-        lr = max(lr_dict, key=lr_dict.get)
+        lr = min(lr_dict, key=lr_dict.get)
         
-        return lr / 100
+        return lr
     
     def get_optimiser(self, step_flag='exp') -> torch.optim.Optimizer:
         """ Returns the optimiser that we are using, with optimal learning rate
@@ -332,8 +334,9 @@ class Trainer:
         epoch_accuracy = 0.0
         
         #  search for optimal learning rate (LR) using linear LR finder
-        # optimiser = self.get_optimiser(step_flag='exp')
-        optimiser = Adam(self.model.parameters(), lr=0.0001, weight_decay=0.005)
+        optimiser = self.get_optimiser(step_flag='exp')
+        #  hard-coding optimal LR from LearningRateFinder so that it runs faster
+        # optimiser = Adam(self.model.parameters(), lr=0.00001, weight_decay=0.005)
         
         self.model.apply(self._initialise_parameters)
         
@@ -440,14 +443,3 @@ class Trainer:
             print(f'Epoch: {epoch+1:02} | Epoch Eval. Time: {epoch_mins}m {epoch_secs}s')
             print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_accuracy * 100:.2f}%')
             print(f'\t Val. Loss: {val_loss:.3f} |  Val. Acc: {val_accuracy * 100:.2f}%')
-
-
-if __name__ == '__main__':
-    trainer = Trainer()
-    
-    print(trainer.count_parameters(), trainer.count_neurons())
-    
-    num_epochs = 20
-    
-    trainer.train_over_epoch(num_epochs=num_epochs)
-    
