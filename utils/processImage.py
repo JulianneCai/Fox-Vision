@@ -1,12 +1,15 @@
 import os
 
-import db
-    
+from typing import Tuple
+
+import torch    
 from torch.utils.data import Dataset, DataLoader, random_split
+
+import db
 
        
 class FoxDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir, transform=None) -> None:
         """Iterative wrapper that allows PyTorch to iterate through 
         image, class_id during training.
         
@@ -27,14 +30,12 @@ class FoxDataset(Dataset):
             transform=self.transform
         )
        
-    def __len__(self):
+    def __len__(self) -> int:
         return self.db.get_length()
         
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> Tuple[torch.Tensor, torch.Tensor]:
         image = self.db.retrieve_matrix(idx)
         class_id = self.db.retrieve_class_id(idx)
-        # image = self.db.retrieve_matrix_by_class(idx=idx, class_name='fox-girl')
-        # class_id = self.db.retrieve_class_id_by_class(idx=idx, class_name='fox-girl')
         
         image, class_id = self.db.to_tensor(image, class_id)
             
@@ -45,10 +46,18 @@ class ImageProcessor:
     """ Decomposes an image into a matrix of RGB values at each pixel 
     
     Args:
+        root_dir (str): the directory containing the data files
         batch_size (int): size of batches
         img_size (int or tuple): size of image
+        transform (torchvision.transforms): image transformations
     """
-    def __init__(self, root_dir, batch_size, img_size, transform=None):
+    def __init__(
+            self, 
+            root_dir, 
+            batch_size, 
+            img_size, 
+            transform=None
+        ) -> None:
         self.root_dir = root_dir
         self.batch_size = batch_size
         
@@ -73,7 +82,7 @@ class ImageProcessor:
         test_size=None,
         shuffle=True,
         num_workers=0
-        ):
+        ) -> Tuple[DataLoader, DataLoader]:
         """Splits data loader into training and testing dataloaders
 
         Args:
@@ -84,7 +93,7 @@ class ImageProcessor:
             num_workers (int): number of workers for the dataloader. Defaults to 0.
 
         Returns:
-            tuple(torch.utils.DataLoader, torch.utils.DataLoader): tuple of training and testing dataloaders, in that order
+            Tuple[torch.utils.DataLoader, torch.utils.DataLoader]: tuple of training and testing dataloaders, in that order
         """
         if train_size and test_size is None:
             train_size = 0.8

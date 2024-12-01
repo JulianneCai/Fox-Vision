@@ -3,8 +3,6 @@ import numpy as np
 import skimage
 import torch
 
-from PIL import Image
-
 
 class Rescale(object):
     """Rescales the iamge to a given size
@@ -17,10 +15,10 @@ class Rescale(object):
     Returns:
         np.ndarray: RGB matrix of the image
     """
-    def __init__(self, size):
+    def __init__(self, size) -> None:
         self.size = size
         
-    def __call__(self, image):
+    def __call__(self, image) -> np.ndarray:
         height, width = image.shape[:2]
         
         if isinstance(self.size, int):
@@ -48,7 +46,7 @@ class RandomCrop(object):
     Args:
         size (tuple or int): desired output size. If int, square crop is performed.
     """
-    def __init__(self, size):
+    def __init__(self, size) -> None:
         if isinstance(size, int):
             self.size = (size, size)
         elif isinstance(size, tuple):
@@ -59,7 +57,7 @@ class RandomCrop(object):
         else:
             raise ValueError(f'size must be type int or tuple, but got {type(size)}')
         
-    def __call__(self, image):
+    def __call__(self, image) -> np.ndarray:
         """Randomly crops the image
 
         Args:
@@ -89,7 +87,7 @@ class ToTensor(object):
     Args:
         image (np.ndarray): RGB matrix of the image
     """
-    def __call__(self, image):
+    def __call__(self, image) -> np.ndarray:
         #  numpy image uses H x W x C
         #  PyTorch uses C x H x W
         image = image.transpose((2, 0, 1))
@@ -97,10 +95,15 @@ class ToTensor(object):
     
 
 class RandomHorizontalFlip(object):
-    def __init__(self, p=0.5):
+    """Randomly flips the picture horizontally
+
+    Args:
+        p (float): probability that image gets flipped. Must be float between 0 and 1
+    """
+    def __init__(self, p=0.5) -> None:
         self.p = p
         
-    def __call__(self, image):
+    def __call__(self, image) -> np.ndarray:
         if torch.rand(1) < self.p:
             image = image.transpose((1, 0, 2))
         return image
