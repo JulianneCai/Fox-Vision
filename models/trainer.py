@@ -282,7 +282,7 @@ class Trainer:
     
         lr = min(lr_dict, key=lr_dict.get)
         
-        return lr
+        return lr / 10
     
     def get_optimiser(self, step_flag='exp') -> torch.optim.Optimizer:
         """ Returns the optimiser that we are using, with optimal learning rate
