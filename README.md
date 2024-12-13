@@ -1,4 +1,4 @@
-## FoxVision: A Discord bot that uses CNN to detect Foxes!
+## FoxVision: A Discord bot that uses CNN to detect foxes!
 
 ## Goals of this Project
  - Process fox images and save them into SQLite database
